@@ -9,12 +9,13 @@ Runs in any browser and packages as an Android APK via [Capacitor](https://capac
 
 | Piece | What it does | File |
 |---|---|---|
-| Track builder – 🧩 Pieces | Drag **Start / Straight / Corner / Chicane** pieces from the palette onto a 10×8 grid (30 m cells). Tap a piece to rotate it, drag it to move it, drag it off the grid to remove it (or use Delete mode). The editor follows the chain from the Start piece and shows driving-direction arrows when the loop is closed, or marks the gap / mis-rotated piece in red. | `src/ui/tileEditor.js`, `src/sim/tiles.js` |
+| Track builder – 🧩 Pieces | Drag **Start / Straight / Corner / Chicane** pieces from the palette onto a 12×9 grid (30 m cells). **Tap a piece to edit its properties**: straight length (30–120 m), corner curve (tight r=15 m, medium r=45 m, wide r=75 m), chicane length & wiggle, and an obstacle. Tap the selected piece again to rotate it, drag to move, drag off the grid to remove. The editor follows the chain from the Start piece and shows direction arrows when the loop is closed, or marks the gap / mis-rotated piece in red. | `src/ui/tileEditor.js`, `src/sim/tiles.js` |
+| Obstacles | Drag 🔨 **Hammer** (swings across the road – fatal), 🔺 **Spikes** (fatal), 📦 **Crates** (solid – you stop dead) or 🛢️ **Oil** (almost no grip) onto any piece; set lane (left/middle/right) and position in the properties panel. The cars' distance sensors "see" hammers, spikes and crates; oil is invisible. | `src/sim/obstacles.js` |
 | Track builder – ✏️ Freehand | Tap to place control points, drag to move; a smooth closed spline is built through them. Warns about corners too tight to drive. | `src/ui/editor.js`, `src/sim/track.js` |
 | Car physics | Top-down bicycle model: engine, brakes, drag, grip limit (understeer + tyre scrub if you corner too fast). | `src/sim/car.js` |
 | Sensors (inputs) | 9 distance rays to the track edges, speed, position across the track, and the direction (relative to the car) of the road 10/25/45/70 m ahead – like a driver looking through the corner. 15 inputs in total. | `src/sim/car.js` |
 | Brain | Feed-forward net, `15 → 12 → 8 → 2` (tanh). Outputs **steering** and **throttle/brake**. | `src/sim/nn.js` |
-| Evolution | Genetic algorithm: fitness → tournament selection → two-point crossover → gaussian mutation, with elitism (the best-ever brain always survives) and mutation that ramps up automatically when progress stalls. | `src/sim/evolution.js` |
+| Evolution | Genetic algorithm: fitness → tournament selection → (sometimes) crossover → gaussian mutation. The top 10% survive unchanged; ~60% of children get only tiny "fine-tune" mutations, so most of the field drives as well as the leaders instead of one smart car and 49 wrecks; the rest explore, more strongly while nobody can finish yet or progress stalls. | `src/sim/evolution.js` |
 | Fitness | Cars that don't finish are scored by distance covered. **Every finisher beats every non-finisher**, and among finishers a faster lap scores higher, so once the AI can get round, the only goal left is lap time. | `Car.computeFitness()` |
 
 A car is eliminated when it leaves the track, stops making progress for 3 s, or drives the wrong way.
@@ -67,7 +68,7 @@ Or `npx cap open android` to open the project in Android Studio and run it on a 
 ## Ideas for next steps
 
 - Ghost replay of the best lap, and a "race the AI yourself" mode
-- More pieces: wide 2×2 sweepers, crossovers/bridges, elevation, banking, different surfaces (grass = slow, not death)
+- More pieces/obstacles: crossovers/bridges, jumps, moving walls, boost pads, elevation, banking, grass that slows instead of kills
 - Multiple laps / flying laps, and checkpoints with split times
 - NEAT-style evolving network topology
 - Several tracks at once so brains generalise

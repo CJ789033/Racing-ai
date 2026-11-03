@@ -1,4 +1,5 @@
 // Simple top-down car physics + sensors. Everything happens on the XZ plane.
+import { obstacleContact, obstacleRay } from './obstacles.js';
 
 export const CAR = {
   maxSpeed: 48,      // m/s (~170 km/h)
@@ -49,6 +50,8 @@ export class Car {
     this.finished = false;
     this.lapTime = null;
     this.crashed = false;
+    this.onOil = false;
+    this.killedBy = null;
     this.fitness = 0;
   }
 
@@ -57,7 +60,14 @@ export class Car {
     const h = this.heading;
     for (let r = 0; r < RAY_ANGLES.length; r++) {
       const a = h + RAY_ANGLES[r];
-      const d = tr.raycast(this.x, this.z, Math.cos(a), Math.sin(a), this.seg, RAY_LENGTH);
+      const dx = Math.cos(a), dz = Math.sin(a);
+      let d = tr.raycast(this.x, this.z, dx, dz, this.seg, RAY_LENGTH);
+      // obstacles ahead are "seen" by the same rays (oil isn't visible)
+      for (const o of tr.obstacles) {
+        const sd = tr.segDiff(this.seg, o.seg);
+        if (sd < -6 || sd > 40) continue;
+        d = Math.min(d, obstacleRay(o, this.x, this.z, dx, dz, this.time, d));
+      }
       this.rays[r] = d;
       inp[r] = d / RAY_LENGTH;
     }
@@ -96,13 +106,15 @@ export class Car {
     const steerAngle = this.steer * c.maxSteer / (1 + this.speed / 30);
     let yawRate = this.speed * Math.tan(steerAngle) / c.wheelBase;
     const latAcc = Math.abs(yawRate * this.speed);
-    if (latAcc > c.grip) {
-      yawRate *= c.grip / latAcc;
+    const grip = this.onOil ? c.grip * 0.25 : c.grip;
+    if (latAcc > grip) {
+      yawRate *= grip / latAcc;
       // scrubbing tyres costs speed
-      this.speed = Math.max(0, this.speed - (latAcc - c.grip) * 0.15 * dt);
+      this.speed = Math.max(0, this.speed - (latAcc - grip) * 0.15 * dt);
     }
     this.heading += yawRate * dt;
     const vx = Math.cos(this.heading) * this.speed, vz = Math.sin(this.heading) * this.speed;
+    const px = this.x, pz = this.z;
     this.x += vx * dt; this.z += vz * dt;
     this.distance += this.speed * dt;
     this.time += dt;
@@ -121,8 +133,21 @@ export class Car {
       this.lastProgressTime = this.time;
     }
 
+    // Obstacles
+    this.onOil = false;
+    let dead = null;
+    for (const o of tr.obstacles) {
+      const sd = tr.segDiff(this.seg, o.seg);
+      if (sd < -4 || sd > 4) continue;
+      const hit = obstacleContact(o, this.x, this.z, this.time);
+      if (hit === 'dead') dead = o.type;
+      else if (hit === 'solid') { this.x = px; this.z = pz; this.speed = 0; }
+      else if (hit === 'oil') this.onOil = true;
+    }
+
     // Termination conditions
-    if (nr.dist > tr.halfWidth) { this.alive = false; this.crashed = true; }
+    if (dead) { this.alive = false; this.crashed = true; this.killedBy = dead; }
+    else if (nr.dist > tr.halfWidth) { this.alive = false; this.crashed = true; }
     else if (this.time - this.lastProgressTime > STALL_TIME) this.alive = false;
     else if (this.progress < -3) this.alive = false;
     else if (this.progress >= tr.N) {

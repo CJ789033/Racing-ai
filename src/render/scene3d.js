@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CAR, RAY_ANGLES } from '../sim/car.js';
+import { hammerLat } from '../sim/obstacles.js';
 
 const COL_ALIVE = new THREE.Color('#3fa7ff');
 const COL_ELITE = new THREE.Color('#b26bff');
@@ -163,6 +164,7 @@ export class Scene3D {
     g.add(beam);
 
     this.addScenery(track);
+    this.addObstacles(track);
     this.frameTrack();
   }
 
@@ -192,6 +194,67 @@ export class Scene3D {
     });
     tm.castShadow = lm.castShadow = true;
     this.trackGroup.add(tm, lm);
+  }
+
+  addObstacles(track) {
+    this.hammers = [];
+    const metal = new THREE.MeshLambertMaterial({ color: '#9ca3af' });
+    for (const o of track.obstacles) {
+      const g = new THREE.Group();
+      g.position.set(o.x, 0, o.z);
+      g.rotation.y = -Math.atan2(o.nz, o.nx); // local +X = across the road, local Z = along it
+      if (o.type === 'spikes') {
+        const plate = new THREE.Mesh(new THREE.BoxGeometry(2 * o.b, 0.15, 2 * o.a), new THREE.MeshLambertMaterial({ color: '#4b5563' }));
+        plate.position.y = 0.1; g.add(plate);
+        const cones = [];
+        for (let x = -o.b + 0.4; x <= o.b - 0.3; x += 0.75) for (let z = -o.a + 0.4; z <= o.a - 0.3; z += 0.75) {
+          const c = new THREE.ConeGeometry(0.28, 0.9, 6); c.translate(x, 0.6, z); cones.push(c);
+        }
+        const sp = new THREE.Mesh(mergeGeometries(cones), new THREE.MeshPhongMaterial({ color: '#e5e7eb', shininess: 80 }));
+        sp.castShadow = true; g.add(sp);
+      } else if (o.type === 'crates') {
+        const n = Math.max(1, Math.round((2 * o.b) / (2 * o.a)));
+        const size = (2 * o.b) / n;
+        const mat = new THREE.MeshLambertMaterial({ color: '#b7793b' });
+        const edge = new THREE.MeshLambertMaterial({ color: '#6b4220' });
+        for (let i = 0; i < n; i++) for (let layer = 0; layer < (i % 2 ? 2 : 1); layer++) {
+          const s2 = Math.min(size, 2 * o.a) * 0.95;
+          const box = new THREE.Mesh(new THREE.BoxGeometry(s2, s2, s2), mat);
+          box.position.set(-o.b + size * (i + 0.5), s2 / 2 + layer * s2, 0);
+          box.rotation.y = (i * 0.37) % 0.3;
+          box.castShadow = true;
+          const frame = new THREE.Mesh(new THREE.BoxGeometry(s2 * 1.02, s2 * 0.15, s2 * 1.02), edge);
+          frame.position.copy(box.position); frame.position.y += s2 * 0.42; frame.rotation.y = box.rotation.y;
+          g.add(box, frame);
+        }
+      } else if (o.type === 'oil') {
+        const slick = new THREE.Mesh(new THREE.CircleGeometry(o.r, 24), new THREE.MeshPhongMaterial({ color: '#0b0b10', shininess: 120, specular: '#6655aa' }));
+        slick.rotation.x = -Math.PI / 2; slick.scale.set(1, 0.85, 1); slick.position.y = 0.09;
+        g.add(slick);
+      } else if (o.type === 'hammer') {
+        // gantry with a pendulum hammer swinging across the road
+        const span = track.halfWidth + 1.8;
+        const arm = Math.max(8.8, o.amp / 0.9);
+        const pivotY = arm + 1.3;
+        for (const sx of [-1, 1]) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.6, pivotY + 0.5, 0.6), metal);
+          post.position.set(sx * span, (pivotY + 0.5) / 2, 0); post.castShadow = true; g.add(post);
+        }
+        const beam = new THREE.Mesh(new THREE.BoxGeometry(2 * span + 0.6, 0.6, 0.6), new THREE.MeshLambertMaterial({ color: '#f59e0b' }));
+        beam.position.y = pivotY + 0.3; g.add(beam);
+        const swing = new THREE.Group(); swing.position.y = pivotY;
+        const rod = new THREE.Mesh(new THREE.BoxGeometry(0.25, arm, 0.25), metal);
+        rod.position.y = -arm / 2; swing.add(rod);
+        const headGeo = new THREE.CylinderGeometry(o.headR * 0.75, o.headR * 0.75, 3.2, 14); headGeo.rotateX(Math.PI / 2);
+        const head = new THREE.Mesh(headGeo, new THREE.MeshLambertMaterial({ color: '#b91c1c' }));
+        head.position.y = -arm; head.castShadow = true; swing.add(head);
+        g.add(swing);
+        // hammer swings in the local X/Y plane, centred on the road
+        g.position.set(o.cx, 0, o.cz);
+        this.hammers.push({ o, swing, arm });
+      }
+      this.trackGroup.add(g);
+    }
   }
 
   frameTrack() {
@@ -240,7 +303,11 @@ export class Scene3D {
     this.scene.add(this.bodies, this.darks);
   }
 
-  updateCars(cars, leader, dt) {
+  updateCars(cars, leader, dt, simTime = 0) {
+    for (const h of this.hammers || []) {
+      const lat = hammerLat(h.o, simTime);
+      h.swing.rotation.z = Math.asin(Math.max(-1, Math.min(1, lat / h.arm)));
+    }
     const m = this._m, q = this._q, v = this._v;
     cars.forEach((c, i) => {
       // Dead cars sink slightly into the ground and turn grey
@@ -267,6 +334,7 @@ export class Scene3D {
       }
       pos.needsUpdate = true;
       this.marker.position.set(leader.x, 4 + Math.sin(performance.now() / 200) * 0.4, leader.z);
+      this.marker.visible = this.cameraMode !== 'follow';
     }
 
     this.updateCamera(leader, dt);

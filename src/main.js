@@ -3,7 +3,7 @@ import { Evolution, DEFAULT_SETTINGS, DT } from './sim/evolution.js';
 import { Scene3D } from './render/scene3d.js';
 import { TrackEditor } from './ui/editor.js';
 import { TileEditor } from './ui/tileEditor.js';
-import { TILE_PRESETS, traceLayout } from './sim/tiles.js';
+import { TILE_PRESETS, traceLayout, COLS, ROWS } from './sim/tiles.js';
 import { drawNetwork, drawChart } from './ui/panels.js';
 
 const $ = id => document.getElementById(id);
@@ -25,28 +25,61 @@ const state = {
 
 const scene = new Scene3D($('view3d'));
 const editor = new TrackEditor($('editorCanvas'), { onChange: updateEditorInfo });
-const tileEditor = new TileEditor($('tileCanvas'), $('palette'), {
-  onChange: updateEditorInfo,
-  getReserved: () => {
-    // Palette: a row above the bottom bar in portrait, a column on the left otherwise
-    const palEl = $('palette');
-    const top = $('editorTop').getBoundingClientRect(), bar = $('editorBar').getBoundingClientRect();
-    const portrait = window.innerHeight > window.innerWidth;
-    palEl.classList.toggle('horizontal', portrait);
-    if (portrait) {
-      palEl.style.top = 'auto'; palEl.style.maxHeight = '';
-      palEl.style.bottom = (window.innerHeight - bar.top + 6) + 'px';
-    } else {
-      palEl.style.bottom = 'auto';
-      palEl.style.top = (top.bottom + 6) + 'px';
-      palEl.style.maxHeight = Math.max(120, bar.top - top.bottom - 12) + 'px';
-    }
-    const pal = palEl.getBoundingClientRect();
-    return portrait
-      ? { top: top.bottom, bottom: window.innerHeight - pal.top, left: 0, right: 0 }
-      : { top: top.bottom, bottom: window.innerHeight - bar.top, left: pal.right, right: 0 };
-  },
+const tileEditor = new TileEditor($('tileCanvas'), $('palette'), $('props'), {
+  onChange: ed => { updateEditorInfo(ed); layoutTileUI(); },
+  onMessage: msg => toast(msg),
+  getReserved: () => layoutTileUI(),
 });
+
+/**
+ * Position the palette and the properties panel around the grid.
+ * Landscape: palette on the left, properties on the right.
+ * Portrait: palette above the bottom bar; while a piece is selected, its
+ * properties replace the palette there.
+ */
+let lastPanelOpen = null;
+function layoutTileUI() {
+  const palEl = $('palette'), propsEl = $('props');
+  const top = $('editorTop').getBoundingClientRect(), bar = $('editorBar').getBoundingClientRect();
+  const H = window.innerHeight;
+  const portrait = H > window.innerWidth;
+  const open = !!tileEditor.selected;
+  palEl.classList.toggle('horizontal', portrait);
+  propsEl.classList.toggle('horizontal', portrait);
+  if (portrait) {
+    palEl.style.top = 'auto'; palEl.style.maxHeight = '';
+    palEl.style.bottom = (H - bar.top + 6) + 'px';
+    palEl.style.visibility = open ? 'hidden' : 'visible';
+    propsEl.style.display = open ? '' : 'none';
+    propsEl.style.top = 'auto';
+    propsEl.style.bottom = (H - bar.top + 6) + 'px';
+    propsEl.style.maxHeight = Math.max(150, (bar.top - top.bottom) * 0.55) + 'px';
+  } else {
+    palEl.style.visibility = 'visible';
+    palEl.style.bottom = 'auto';
+    palEl.style.top = (top.bottom + 6) + 'px';
+    palEl.style.maxHeight = Math.max(120, bar.top - top.bottom - 12) + 'px';
+    propsEl.style.display = '';
+    propsEl.style.bottom = 'auto';
+    propsEl.style.top = '10px';
+    propsEl.style.maxHeight = (bar.top - 20) + 'px';
+  }
+  const pal = palEl.getBoundingClientRect(), props = propsEl.getBoundingClientRect();
+  let reserved;
+  if (portrait) reserved = { top: top.bottom, bottom: H - Math.min(pal.top, H - 1), left: 0, right: 0 };
+  else {
+    // grid either below the info card, or beside it – whichever gives bigger cells
+    const W = window.innerWidth, right = W - props.left, bottom = H - bar.top;
+    const below = { top: top.bottom, bottom, left: pal.right, right };
+    const beside = { top: 0, bottom, left: Math.max(pal.right, top.right), right };
+    const cell = r => Math.min((W - r.left - r.right) / COLS, (H - r.top - r.bottom) / ROWS);
+    reserved = cell(below) >= cell(beside) ? below : beside;
+  }
+  // In portrait the grid keeps its size when the panel opens/closes (no jumping)
+  if (lastPanelOpen !== null && lastPanelOpen !== open && !portrait) requestAnimationFrame(() => tileEditor.resize());
+  lastPanelOpen = open;
+  return reserved;
+}
 window.__tileEditor = tileEditor; // handy for automated UI tests
 const activeEditor = () => (state.editorKind === 'tiles' ? tileEditor : editor);
 
@@ -55,14 +88,14 @@ function buildTrack(def) {
   if (def.kind === 'tiles') {
     const res = traceLayout(def.tiles);
     if (!res.ok) throw new Error(res.error.msg);
-    return new Track(res.points, def.width, { polyline: true });
+    return new Track(res.points, def.width, { polyline: true, obstacles: res.obstacles });
   }
   return new Track(def.points, def.width);
 }
 
 function currentDef() {
   return state.editorKind === 'tiles'
-    ? { kind: 'tiles', width: tileEditor.width, tiles: tileEditor.tiles.map(({ type, rot, c, r }) => ({ type, rot, c, r })) }
+    ? { kind: 'tiles', width: tileEditor.width, tiles: tileEditor.tiles.map(t => JSON.parse(JSON.stringify(t))) }
     : { kind: 'spline', width: editor.width, points: editor.points.map(({ x, z }) => ({ x, z })) };
 }
 
@@ -165,7 +198,7 @@ function updateEditorInfo(ed) {
   if (ed === tileEditor) {
     const res = ed.result;
     if (ed.preview) info = `✅ Closed loop · ${ed.preview.length.toFixed(0)} m · ${res.order.length} pieces` + (res.unused ? ` · ${res.unused} unused` : '');
-    else if (ed.tiles.length) issue = res.error.msg;
+    else if (ed.tiles.length) issue = res.error ? res.error.msg : null;
     else info = 'Start by dragging the Start piece onto the grid';
   } else {
     if (ed.preview) info = `Length ${ed.preview.length.toFixed(0)} m · ${ed.points.length} points · width ${ed.width} m`;
@@ -324,7 +357,7 @@ function frame(now) {
   }
 
   const leader = evo.leader();
-  scene.updateCars(evo.cars, leader, dt);
+  scene.updateCars(evo.cars, leader, dt, evo.time);
 
   hudTimer -= dt;
   if (hudTimer <= 0) {

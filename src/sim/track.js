@@ -1,6 +1,7 @@
 // Track geometry: turns a closed loop of player-placed control points into a
 // smooth, uniformly sampled centerline with left/right borders, and provides
 // fast local queries (nearest segment, raycasts against the borders).
+import { prepareObstacles } from './obstacles.js';
 
 const SAMPLE_STEP = 2; // metres between centerline samples
 
@@ -18,10 +19,11 @@ export class Track {
    * @param {{x:number,z:number}[]} points closed loop of control points (metres)
    * @param {number} width track width in metres
    */
-  constructor(points, width = 12, { polyline = false } = {}) {
+  constructor(points, width = 12, { polyline = false, obstacles = [] } = {}) {
     if (points.length < 3) throw new Error('A track needs at least 3 points');
     this.points = points.map(p => ({ x: p.x, z: p.z }));
     this.polyline = polyline; // true: points already form the centerline (grid pieces)
+    this.obstacleDefs = obstacles; // [{ type, lane, s }]
     this.width = width;
     this.halfWidth = width / 2;
     this.build();
@@ -84,6 +86,15 @@ export class Track {
       minZ = Math.min(minZ, this.cz[i]); maxZ = Math.max(maxZ, this.cz[i]);
     }
     this.bounds = { minX, maxX, minZ, maxZ };
+    this.obstacles = prepareObstacles(this, this.obstacleDefs);
+  }
+
+  /** Signed segment difference b - a, wrapped into (-N/2, N/2]. */
+  segDiff(a, b) {
+    let d = (b - a) % this.N;
+    if (d > this.N / 2) d -= this.N;
+    if (d <= -this.N / 2) d += this.N;
+    return d;
   }
 
   wrap(i) { const N = this.N; return ((i % N) + N) % N; }

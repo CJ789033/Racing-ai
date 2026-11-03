@@ -13,7 +13,7 @@ const tracks = [
   ...Object.entries(TILE_PRESETS).map(([name, p]) => ['Tiles:' + name, () => {
     const res = traceLayout(p.tiles());
     if (!res.ok) throw new Error(name + ': ' + res.error.msg);
-    return new Track(res.points, p.width, { polyline: true });
+    return new Track(res.points, p.width, { polyline: true, obstacles: res.obstacles });
   }]),
 ];
 for (const [name, make] of tracks) {

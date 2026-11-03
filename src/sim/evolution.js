@@ -6,7 +6,11 @@ import { Car, INPUT_SIZE, OUTPUT_SIZE } from './car.js';
 export const DEFAULT_SETTINGS = {
   populationSize: 50,
   hidden: [12, 8],
-  elites: 3,
+  elites: 3,              // minimum number of unchanged survivors
+  eliteFraction: 0.1,     // ...or this share of the population, whichever is larger
+  crossoverRate: 0.3,
+  fineTuneShare: 0.6,     // share of children that only get tiny mutations
+  fineTuneScale: 0.12,
   mutationRate: 0.08,     // chance each weight is mutated
   mutationStrength: 0.35, // std-dev of gaussian nudge
   tournament: 4,
@@ -93,24 +97,33 @@ export class Evolution {
       this.stagnation = 0;
     } else this.stagnation++;
 
-    // Adaptive mutation: shake things up when stuck
+    // Next generation. Most children are small tweaks of good drivers, so the
+    // whole field stays competent; only a few explore with big mutations
+    // (and those get bigger the longer progress has stalled).
     const boost = 1 + Math.min(2, this.stagnation / 8);
-    const rate = S.mutationRate * boost, strength = S.mutationStrength * boost;
-
+    const nElite = Math.min(sorted.length, Math.max(S.elites, Math.round(S.populationSize * S.eliteFraction)));
     const next = [];
-    // Elitism: best genomes survive unchanged (incl. best ever)
-    if (this.bestGenome) next.push(Float32Array.from(this.bestGenome));
-    for (let i = 0; next.length < Math.min(S.elites, sorted.length); i++) next.push(Float32Array.from(sorted[i].brain.genome));
+    if (this.bestGenome) next.push(Float32Array.from(this.bestGenome)); // best ever always survives
+    for (let i = 0; next.length < nElite; i++) next.push(Float32Array.from(sorted[i].brain.genome));
+    this.eliteCount = next.length;
     while (next.length < S.populationSize) {
-      const a = this.tournamentPick(sorted), b = this.tournamentPick(sorted);
-      const child = crossover(a.brain.genome, b.brain.genome);
-      this.mutate(child, rate, strength);
+      const a = this.tournamentPick(sorted);
+      const child = Math.random() < S.crossoverRate
+        ? crossover(a.brain.genome, this.tournamentPick(sorted).brain.genome)
+        : Float32Array.from(a.brain.genome);
+      // Until someone can finish a lap, explore more; afterwards mostly refine
+      const share = this.bestLap ? S.fineTuneShare : S.fineTuneShare * 0.6;
+      const scale = this.bestLap ? S.fineTuneScale : S.fineTuneScale * 2.5;
+      const r = Math.random();
+      if (r < share) this.mutate(child, S.mutationRate * scale, S.mutationStrength * scale); // fine-tune
+      else if (r < share + (1 - share) * 0.7) this.mutate(child, S.mutationRate, S.mutationStrength);        // normal
+      else this.mutate(child, S.mutationRate * boost, S.mutationStrength * boost * 1.5); // explore
       next.push(child);
     }
 
     this.cars.forEach((car, i) => {
       car.brain.genome = next[i];
-      car.isElite = i < S.elites;
+      car.isElite = i < this.eliteCount;
       car.reset();
     });
     this.generation++;

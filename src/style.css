@@ -10,13 +10,28 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #14171c; col
 .tab { flex-direction: row; font-size: 13px; padding: 6px 10px; }
 .tab.active { background: #2a5d8f; border-color: #3fa7ff; }
 .palette { position: absolute; left: calc(8px + env(safe-area-inset-left)); top: 120px;
-  display: flex; flex-direction: column; gap: 6px; padding: 6px; overflow: hidden; }
-.palette.horizontal { flex-direction: row; left: 50%; transform: translateX(-50%); }
+  display: grid; grid-auto-flow: column; grid-template-rows: repeat(4, auto); gap: 4px; padding: 5px; overflow: hidden; }
+.palette.horizontal { grid-auto-flow: row; grid-template-rows: none; grid-template-columns: repeat(4, auto); left: 50%; transform: translateX(-50%); }
 .paletteItem { width: 64px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px;
   border-radius: 8px; border: 2px solid transparent; cursor: grab; touch-action: none; }
+.paletteItem.obstacle { background: rgba(255,255,255,0.05); }
 .paletteItem canvas { width: 52px; height: 52px; border-radius: 4px; display: block; pointer-events: none; }
 .paletteItem small { font-size: 10px; color: #c3cad4; pointer-events: none; }
 .paletteItem.active { border-color: #ff8a1f; background: rgba(255,138,31,0.15); }
+.props { position: absolute; right: calc(8px + env(safe-area-inset-right)); top: 10px; width: 230px; max-height: calc(100% - 20px);
+  overflow-y: auto; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.props.horizontal { left: 8px; right: 8px; width: auto; top: auto; }
+.props.empty { opacity: 0.85; }
+.propHead { display: flex; justify-content: space-between; align-items: center; font-size: 15px; }
+.iconBtn { min-width: 0; padding: 2px 8px; font-size: 14px; }
+.propRow { display: flex; flex-direction: column; gap: 4px; }
+.propLabel { color: #9aa4b1; font-size: 12px; }
+.seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.seg button { flex-direction: row; min-width: 0; padding: 6px 9px; font-size: 13px; }
+.seg button.active { background: #2a5d8f; border-color: #3fa7ff; }
+.propButtons { display: flex; gap: 6px; }
+.propButtons button { flex: 1; }
+.props input[type=range] { width: 100%; }
 .local { margin-top: 4px; color: #7fd8a0; font-size: 11px; }
 .hidden { display: none !important; }
 .muted { color: #9aa4b1; }
