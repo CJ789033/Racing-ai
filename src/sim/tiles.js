@@ -6,7 +6,20 @@
 // which the AI can choose its route.
 
 export const CELL = 30;          // metres per grid cell
-export const COLS = 12, ROWS = 9;
+// Grid size is adjustable in the editor (live bindings: importers always see the current size)
+export let COLS = 12, ROWS = 9;
+export const DEFAULT_GRID = { cols: 12, rows: 9 };
+export const GRID_SIZES = [
+  { cols: 8, rows: 6, label: 'Small' }, { cols: 10, rows: 8, label: 'Compact' }, { cols: 12, rows: 9, label: 'Medium' },
+  { cols: 16, rows: 12, label: 'Large' }, { cols: 20, rows: 15, label: 'Huge' }, { cols: 26, rows: 19, label: 'Giant' },
+];
+export function setGridSize(cols, rows) { COLS = cols; ROWS = rows; }
+
+/** Move pieces by (dc, dr) cells. */
+export function shiftTiles(tiles, dc, dr) {
+  return tiles.map(t => ({ ...t, c: t.c + dc, r: t.r + dr, obstacle: t.obstacle ? { ...t.obstacle } : undefined }))
+    .map(t => { if (!t.obstacle) delete t.obstacle; return t; });
+}
 
 // Edges / headings: 0 = N (-z), 1 = E (+x), 2 = S (+z), 3 = W (-x)
 export const DIR = [[0, -1], [1, 0], [0, 1], [-1, 0]];
@@ -166,7 +179,7 @@ const geoCache = new WeakMap();
  * sampled points) and which footprint cells are "over" (bridge decks).
  */
 export function pieceGeometry(tile) {
-  const sig = JSON.stringify([tile.type, tile.rot, tile.c, tile.r, tile.len, tile.size, tile.amp, tile.height, tile.tunnel]);
+  const sig = JSON.stringify([tile.type, tile.rot, tile.c, tile.r, tile.len, tile.size, tile.amp, tile.height, tile.tunnel, COLS, ROWS]);
   const cached = geoCache.get(tile);
   if (cached && cached.sig === sig) return cached.geo;
 

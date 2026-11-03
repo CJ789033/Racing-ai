@@ -9,6 +9,7 @@ import { Track } from '../sim/track.js';
 import {
   CELL, COLS, ROWS, DIR, opp, PIECES, PALETTE, OBSTACLE_TYPES, OBSTACLE_ORDER, LANES,
   pieceGeometry, footprint, fitsGrid, traceLayout, paramValue, obstacleParam, clashes, canHoldObstacle,
+  setGridSize, shiftTiles,
 } from '../sim/tiles.js';
 import { obstacleLayout } from '../sim/obstacles.js';
 
@@ -23,7 +24,9 @@ export class TileEditor {
     this.panel = panel;
     this.tiles = [];
     this.width = 12;
-    this.mode = 'place'; // place | delete
+    this.mode = 'place'; // place | delete | select
+    this.multi = new Set(); // bulk selection (select mode)
+    this.box = null;        // selection rectangle being dragged
     this.tab = 'road';
     this.paletteSel = { kind: 'piece', type: 'straight', key: 'piece:Straight' };
     this.selected = null;
@@ -40,6 +43,7 @@ export class TileEditor {
     window.addEventListener('pointerup', e => this.pointerUp(e));
     window.addEventListener('pointercancel', () => { this.drag = null; this.press = null; this.draw(); });
     window.addEventListener('resize', () => this.resize());
+    window.addEventListener('keydown', e => this.keyDown(e));
     this.buildPalette();
     this.renderPanel();
   }
@@ -184,6 +188,13 @@ export class TileEditor {
       if (t) { this.remove(t); this.changed(); }
       return;
     }
+    if (this.mode === 'select') {
+      // press on a selected piece: tap = deselect, drag = move the group;
+      // anywhere else: tap = toggle that piece, drag = selection box
+      const hit = this.tilesAt(cell.c, cell.r).find(x => this.multi.has(x));
+      this.press = { tile: hit || t, x: e.clientX, y: e.clientY, cell, group: !!hit };
+      return;
+    }
     if (t) { this.press = { tile: t, x: e.clientX, y: e.clientY, cell }; return; }
     if (this.selected) { this.select(null); return; } // tap on empty grass closes the panel
     if (this.paletteSel.kind === 'piece') {
@@ -193,6 +204,15 @@ export class TileEditor {
   }
 
   pointerMove(e) {
+    if (this.press && this.mode === 'select' && !this.drag && !this.box) {
+      if (Math.hypot(e.clientX - this.press.x, e.clientY - this.press.y) > DRAG_THRESHOLD) {
+        if (this.press.group) this.startDrag({ kind: 'group', tiles: [...this.multi], from: this.press.cell }, e);
+        else this.box = { x0: this.press.x, y0: this.press.y, x1: e.clientX, y1: e.clientY };
+        this.press = null;
+      }
+      return;
+    }
+    if (this.box) { this.box.x1 = e.clientX; this.box.y1 = e.clientY; this.draw(); return; }
     if (this.press && !this.drag) {
       if (Math.hypot(e.clientX - this.press.x, e.clientY - this.press.y) > DRAG_THRESHOLD) {
         const t = this.press.tile;
@@ -210,6 +230,29 @@ export class TileEditor {
   }
 
   pointerUp(e) {
+    if (this.box) {
+      const a = this.cellAtClamped(this.box.x0, this.box.y0), b = this.cellAtClamped(this.box.x1, this.box.y1);
+      const c0 = Math.min(a.c, b.c), c1 = Math.max(a.c, b.c), r0 = Math.min(a.r, b.r), r1 = Math.max(a.r, b.r);
+      for (const t of this.tiles) if (footprint(t).some(f => f.c >= c0 && f.c <= c1 && f.r >= r0 && f.r <= r1)) this.multi.add(t);
+      this.box = null;
+      this.bulkChanged();
+      return;
+    }
+    if (this.press && this.mode === 'select') {
+      const t = this.press.tile;
+      this.press = null;
+      if (t) { if (this.multi.has(t)) this.multi.delete(t); else this.multi.add(t); }
+      else this.multi.clear(); // tap on empty grass
+      this.bulkChanged();
+      return;
+    }
+    if (this.drag && this.drag.kind === 'group') {
+      const d = this.drag, cell = this.cellAt(e.clientX, e.clientY);
+      this.drag = null;
+      if (!cell) { this.onMessage('Drop the selection on the grid (use 🗑️ to delete it)'); this.draw(); return; }
+      this.moveGroup(d.tiles, cell.c - d.from.c, cell.r - d.from.r, true);
+      return;
+    }
     if (this.press) {
       const t = this.press.tile, stacked = this.tilesAt(this.press.cell.c, this.press.cell.r).length > 1;
       this.press = null;
@@ -299,15 +342,102 @@ export class TileEditor {
     this.draw();
   }
 
+  // ------------------------------------------------------------ bulk selection
+  setMode(mode) {
+    this.mode = mode;
+    if (mode !== 'select') this.multi.clear();
+    this.selected = null;
+    this.bulkChanged();
+  }
+
+  bulkChanged() {
+    for (const t of [...this.multi]) if (!this.tiles.includes(t)) this.multi.delete(t);
+    this.renderPanel();
+    this.onChange(this);
+    this.draw();
+  }
+
+  cellAtClamped(x, y) {
+    const r = this.canvas.getBoundingClientRect();
+    const c = Math.floor(((x - r.left) * this.dpr - this.originX) / this.cellPx);
+    const row = Math.floor(((y - r.top) * this.dpr - this.originY) / this.cellPx);
+    return { c: Math.max(0, Math.min(COLS - 1, c)), r: Math.max(0, Math.min(ROWS - 1, row)) };
+  }
+
+  /** Can the group be shifted by (dc, dr)? Returns the pieces it would land on. */
+  groupClashes(group, dc, dr) {
+    const moved = group.map(t => ({ ...t, c: t.c + dc, r: t.r + dr }));
+    if (!moved.every(fitsGrid)) return null;
+    const others = this.tiles.filter(t => !this.multi.has(t));
+    return others.filter(o => moved.some(m => clashes(o, m)));
+  }
+
+  /** Move all selected pieces; dropping onto other pieces replaces them (drag) or is refused (nudge). */
+  moveGroup(group, dc, dr, replace = false) {
+    if (!dc && !dr) { this.draw(); return; }
+    const hit = this.groupClashes(group, dc, dr);
+    if (!hit) { this.onMessage('The selection would go off the grid'); this.draw(); return; }
+    if (hit.length && !replace) { this.onMessage('Something is in the way'); this.draw(); return; }
+    this.tiles = this.tiles.filter(t => !hit.includes(t));
+    for (const t of group) { t.c += dc; t.r += dr; }
+    if (hit.length) this.onMessage(`Replaced ${hit.length} piece${hit.length > 1 ? 's' : ''}`);
+    this.changed();
+  }
+
+  deleteSelection() {
+    const n = this.multi.size;
+    if (!n) return;
+    this.tiles = this.tiles.filter(t => !this.multi.has(t));
+    this.multi.clear();
+    this.onMessage(`Deleted ${n} piece${n > 1 ? 's' : ''}`);
+    this.changed();
+  }
+
+  keyDown(e) {
+    if (this.mode !== 'select' || !this.multi.size || !this.canvas.offsetParent) return;
+    if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+    const k = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if (k) { e.preventDefault(); this.moveGroup([...this.multi], k[0], k[1]); }
+    else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.deleteSelection(); }
+  }
+
+  get panelOpen() { return !!this.selected || this.mode === 'select'; }
+
   setTiles(tiles, width) {
     this.tiles = tiles.map(t => ({ ...t, obstacle: t.obstacle ? { ...t.obstacle } : undefined }));
     this.tiles.forEach(t => { if (!t.obstacle) delete t.obstacle; });
     if (width) this.width = width;
     this.selected = null;
+    this.multi.clear();
     this.changed();
   }
 
   setWidth(w) { this.width = w; this.buildPalette(); this.changed(); }
+
+  /**
+   * Change the grid size, keeping the layout centred. Pieces that would end
+   * up off the grid are removed (after asking, unless `force`).
+   * Returns false if the player cancelled.
+   */
+  setGridSize(cols, rows, { recenter = true, force = false } = {}) {
+    if (cols === COLS && rows === ROWS) return true;
+    const dc = recenter ? Math.floor((cols - COLS) / 2) : 0, dr = recenter ? Math.floor((rows - ROWS) / 2) : 0;
+    const prev = { cols: COLS, rows: ROWS };
+    setGridSize(cols, rows);
+    const moved = shiftTiles(this.tiles, dc, dr);
+    const keep = moved.filter(fitsGrid);
+    const lost = moved.length - keep.length;
+    if (lost && !force && !confirm(`${lost} piece${lost > 1 ? 's' : ''} won't fit on the smaller grid and will be removed. Continue?`)) {
+      setGridSize(prev.cols, prev.rows);
+      return false;
+    }
+    this.tiles = keep;
+    this.selected = null;
+    this.resize();
+    this.changed();
+    if (lost) this.onMessage(`${lost} piece${lost > 1 ? 's' : ''} removed`);
+    return true;
+  }
 
   changed() {
     this.result = traceLayout(this.tiles);
@@ -332,6 +462,7 @@ export class TileEditor {
   renderPanel() {
     const P = this.panel, t = this.selected;
     if (!P) return;
+    if (this.mode === 'select') { this.renderBulkPanel(); return; }
     P.classList.toggle('empty', !t);
     if (!t) {
       P.innerHTML = '<div class="muted small">Tap a piece on the grid to change its properties.</div>';
@@ -402,6 +533,38 @@ export class TileEditor {
     P.appendChild(btns);
   }
 
+  renderBulkPanel() {
+    const P = this.panel, n = this.multi.size;
+    P.classList.remove('empty');
+    P.innerHTML = '';
+    const head = document.createElement('div'); head.className = 'propHead';
+    head.innerHTML = `<b>${n ? `${n} piece${n > 1 ? 's' : ''} selected` : 'Select pieces'}</b>`;
+    const close = document.createElement('button'); close.className = 'iconBtn'; close.textContent = '✕';
+    close.onclick = () => this.onExitSelect && this.onExitSelect();
+    head.appendChild(close);
+    P.appendChild(head);
+    const note = document.createElement('div'); note.className = 'muted small';
+    note.textContent = n ? 'Drag a selected piece to move them all, or nudge them with the arrows.' : 'Drag a box over pieces, or tap pieces to add/remove them.';
+    P.appendChild(note);
+    const btn = (html, fn, disabled) => { const b = document.createElement('button'); b.innerHTML = html; b.onclick = fn; b.disabled = !!disabled; if (disabled) b.style.opacity = 0.4; return b; };
+    if (n) {
+      const pad = document.createElement('div'); pad.className = 'nudge';
+      const g = [...this.multi];
+      pad.append(
+        document.createElement('span'), btn('⬆️', () => this.moveGroup(g, 0, -1)), document.createElement('span'),
+        btn('⬅️', () => this.moveGroup(g, -1, 0)), btn('⬇️', () => this.moveGroup(g, 0, 1)), btn('➡️', () => this.moveGroup(g, 1, 0)),
+      );
+      P.appendChild(pad);
+    }
+    const row = document.createElement('div'); row.className = 'propButtons';
+    row.append(
+      btn('☑️<small>Select all</small>', () => { this.tiles.forEach(t => this.multi.add(t)); this.bulkChanged(); }, !this.tiles.length),
+      btn('⬚<small>None</small>', () => { this.multi.clear(); this.bulkChanged(); }, !n),
+      btn('🗑️<small>Delete</small>', () => this.deleteSelection(), !n),
+    );
+    P.appendChild(row);
+  }
+
   // ------------------------------------------------------------ drawing
   draw() {
     const ctx = this.ctx, W = this.canvas.width, H = this.canvas.height, s = this.cellPx;
@@ -432,6 +595,35 @@ export class TileEditor {
       ctx.strokeStyle = '#ff8a1f'; ctx.lineWidth = 3 * this.dpr;
       ctx.strokeRect(ox + t.c * s + 1.5, oy + t.r * s + 1.5, g.w * s - 3, g.h * s - 3);
     }
+    const moving = this.drag && this.drag.kind === 'group';
+    for (const t of this.multi) {
+      const g = pieceGeometry(t);
+      ctx.fillStyle = moving ? 'rgba(34,211,238,0.08)' : 'rgba(34,211,238,0.22)';
+      ctx.fillRect(ox + t.c * s, oy + t.r * s, g.w * s, g.h * s);
+      ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 2.5 * this.dpr;
+      ctx.strokeRect(ox + t.c * s + 1.5, oy + t.r * s + 1.5, g.w * s - 3, g.h * s - 3);
+    }
+    if (this.box) {
+      const r = this.canvas.getBoundingClientRect();
+      const x0 = (this.box.x0 - r.left) * this.dpr, y0 = (this.box.y0 - r.top) * this.dpr;
+      const x1 = (this.box.x1 - r.left) * this.dpr, y1 = (this.box.y1 - r.top) * this.dpr;
+      ctx.fillStyle = 'rgba(34,211,238,0.12)'; ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 1.5 * this.dpr; ctx.setLineDash([6 * this.dpr, 4 * this.dpr]);
+      ctx.strokeRect(x0, y0, x1 - x0, y1 - y0); ctx.setLineDash([]);
+    }
+    if (moving) {
+      const d = this.drag, cell = this.cellAtClamped(d.x, d.y);
+      const dc = cell.c - d.from.c, dr = cell.r - d.from.r;
+      const hit = this.groupClashes(d.tiles, dc, dr);
+      for (const t of d.tiles) {
+        const m = { ...t, c: t.c + dc, r: t.r + dr }, g = pieceGeometry(m);
+        ctx.fillStyle = !hit ? 'rgba(255,59,92,0.3)' : hit.length ? 'rgba(255,170,59,0.25)' : 'rgba(255,255,255,0.18)';
+        ctx.fillRect(ox + m.c * s, oy + m.r * s, g.w * s, g.h * s);
+        drawTile(ctx, m, map, k, this.width, 0.65);
+      }
+      if (!hit) label(ctx, 'off the grid', (d.x - this.canvas.getBoundingClientRect().left) * this.dpr, (d.y - this.canvas.getBoundingClientRect().top) * this.dpr - s * 0.6, this.dpr, '#ff3b5c');
+      else if (hit.length) label(ctx, `replaces ${hit.length}`, (d.x - this.canvas.getBoundingClientRect().left) * this.dpr, (d.y - this.canvas.getBoundingClientRect().top) * this.dpr - s * 0.6, this.dpr, '#ffaa3b');
+    }
 
     // Driving-direction arrows (best route) along every road of a valid network
     if (this.preview) {
@@ -457,7 +649,7 @@ export class TileEditor {
     }
 
     // Item being dragged
-    if (this.drag) {
+    if (this.drag && this.drag.kind !== 'group') {
       const d = this.drag;
       const cell = this.cellAt(d.x, d.y);
       const r = this.canvas.getBoundingClientRect();

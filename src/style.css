@@ -35,6 +35,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #14171c; col
 .seg button { flex-direction: row; min-width: 0; padding: 6px 9px; font-size: 13px; }
 .seg button.active { background: #2a5d8f; border-color: #3fa7ff; }
 .propButtons { display: flex; gap: 6px; }
+.nudge { display: grid; grid-template-columns: repeat(3, 48px); gap: 4px; justify-content: center; }
+.nudge button { min-width: 0; padding: 6px 0; }
 .propButtons button { flex: 1; }
 .props input[type=range] { width: 100%; }
 .local { margin-top: 4px; color: #7fd8a0; font-size: 11px; }

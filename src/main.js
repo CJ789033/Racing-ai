@@ -3,7 +3,7 @@ import { Evolution, DEFAULT_SETTINGS, DT } from './sim/evolution.js';
 import { Scene3D } from './render/scene3d.js';
 import { TrackEditor } from './ui/editor.js';
 import { TileEditor } from './ui/tileEditor.js';
-import { TILE_PRESETS, traceLayout, COLS, ROWS, PIECES } from './sim/tiles.js';
+import { TILE_PRESETS, traceLayout, COLS, ROWS, PIECES, GRID_SIZES, DEFAULT_GRID, fitsGrid, shiftTiles, setGridSize } from './sim/tiles.js';
 import { drawNetwork, drawChart } from './ui/panels.js';
 
 const $ = id => document.getElementById(id);
@@ -44,7 +44,7 @@ function layoutTileUI() {
   const top = $('editorTop').getBoundingClientRect(), bar = $('editorBar').getBoundingClientRect();
   const H = window.innerHeight;
   const portrait = H > window.innerWidth;
-  const open = !!tileEditor.selected;
+  const open = tileEditor.panelOpen;
   palEl.classList.toggle('horizontal', portrait);
   propsEl.classList.toggle('horizontal', portrait);
   if (portrait) {
@@ -87,6 +87,7 @@ const activeEditor = () => (state.editorKind === 'tiles' ? tileEditor : editor);
 /** Build the simulation track from a saved/edited definition. */
 function buildTrack(def) {
   if (def.kind === 'tiles') {
+    setGridSize(def.cols || DEFAULT_GRID.cols, def.rows || DEFAULT_GRID.rows);
     const res = traceLayout(def.tiles);
     if (!res.ok) throw new Error(res.error.msg);
     return new Track(res.net, def.width);
@@ -96,13 +97,18 @@ function buildTrack(def) {
 
 function currentDef() {
   return state.editorKind === 'tiles'
-    ? { kind: 'tiles', width: tileEditor.width, tiles: tileEditor.tiles.map(t => JSON.parse(JSON.stringify(t))) }
+    ? { kind: 'tiles', width: tileEditor.width, cols: COLS, rows: ROWS, tiles: tileEditor.tiles.map(t => JSON.parse(JSON.stringify(t))) }
     : { kind: 'spline', width: editor.width, points: editor.points.map(({ x, z }) => ({ x, z })) };
 }
 
 function loadDefIntoEditor(def) {
   setEditorKind(def.kind === 'tiles' ? 'tiles' : 'spline');
-  if (def.kind === 'tiles') tileEditor.setTiles(def.tiles, def.width);
+  if (def.kind === 'tiles') {
+    // older saves have no grid size: they were made on the default grid
+    tileEditor.setGridSize(def.cols || DEFAULT_GRID.cols, def.rows || DEFAULT_GRID.rows, { recenter: false, force: true });
+    syncGridSelect();
+    tileEditor.setTiles(def.tiles, def.width);
+  }
   else editor.setPoints(def.points, def.width);
 }
 
@@ -224,7 +230,7 @@ function updateEditorInfo(ed) {
 const presetSel = $('ePreset');
 presetSel.onchange = () => {
   const v = presetSel.value;
-  if (state.editorKind === 'tiles') { if (TILE_PRESETS[v]) tileEditor.setTiles(TILE_PRESETS[v].tiles(), TILE_PRESETS[v].width); }
+  if (state.editorKind === 'tiles') { if (TILE_PRESETS[v]) loadTilePreset(TILE_PRESETS[v]); }
   else if (v === 'Random') editor.setPoints(randomTrackPoints(), editor.width);
   else if (PRESETS[v]) editor.setPoints(PRESETS[v].points, PRESETS[v].width);
   presetSel.value = '';
@@ -243,12 +249,47 @@ $('eClear').onclick = () => editor.setPoints([]);
 $('eWidth').oninput = e => activeEditor().setWidth(Number(e.target.value));
 $('tabTiles').onclick = () => setEditorKind('tiles');
 $('tabFree').onclick = () => setEditorKind('spline');
-$('tDel').onclick = () => {
-  tileEditor.mode = tileEditor.mode === 'delete' ? 'place' : 'delete';
-  $('tDel').classList.toggle('active', tileEditor.mode === 'delete');
-  tileEditor.draw();
-};
+function setTileMode(mode) {
+  tileEditor.setMode(mode);
+  $('tDel').classList.toggle('active', mode === 'delete');
+  $('tSel').classList.toggle('active', mode === 'select');
+  layoutTileUI();
+  tileEditor.resize();
+}
+$('tDel').onclick = () => setTileMode(tileEditor.mode === 'delete' ? 'place' : 'delete');
+$('tSel').onclick = () => setTileMode(tileEditor.mode === 'select' ? 'place' : 'select');
+tileEditor.onExitSelect = () => setTileMode('place');
 $('tClear').onclick = () => tileEditor.setTiles([]);
+
+// Grid size
+const gridSel = $('tGrid');
+for (const g of GRID_SIZES) {
+  const o = document.createElement('option');
+  o.value = `${g.cols}x${g.rows}`; o.textContent = `${g.label} ${g.cols}×${g.rows}`;
+  gridSel.appendChild(o);
+}
+function syncGridSelect() {
+  if (![...gridSel.options].some(o => o.value === `${COLS}x${ROWS}`)) {
+    const o = document.createElement('option'); o.value = `${COLS}x${ROWS}`; o.textContent = `${COLS}×${ROWS}`; gridSel.appendChild(o);
+  }
+  gridSel.value = `${COLS}x${ROWS}`;
+}
+gridSel.onchange = () => {
+  const [c, r] = gridSel.value.split('x').map(Number);
+  tileEditor.setGridSize(c, r);
+  syncGridSelect(); // reverts the menu if the change was cancelled
+};
+
+/** Presets are designed on the default grid: centre them on the current one (or switch back if too small). */
+function loadTilePreset(p) {
+  const tiles = (() => { const prev = { c: COLS, r: ROWS }; setGridSize(DEFAULT_GRID.cols, DEFAULT_GRID.rows); const t = p.tiles(); setGridSize(prev.c, prev.r); return t; })();
+  const moved = shiftTiles(tiles, Math.floor((COLS - DEFAULT_GRID.cols) / 2), Math.floor((ROWS - DEFAULT_GRID.rows) / 2));
+  if (moved.every(fitsGrid)) { tileEditor.setTiles(moved, p.width); return; }
+  tileEditor.setGridSize(DEFAULT_GRID.cols, DEFAULT_GRID.rows, { recenter: false, force: true });
+  syncGridSelect();
+  tileEditor.setTiles(tiles, p.width);
+  toast('Grid set back to Medium so the preset fits');
+}
 $('eGo').onclick = () => startRace();
 
 // ---------------------------------------------------------------- race UI
@@ -390,6 +431,7 @@ function frame(now) {
 const saved = load();
 editor.setPoints(PRESETS.Kidney.points, PRESETS.Kidney.width);
 tileEditor.setTiles(TILE_PRESETS.Rectangle.tiles(), TILE_PRESETS.Rectangle.width);
+syncGridSelect();
 if (saved && saved.track) {
   state.settings = { ...DEFAULT_SETTINGS, ...saved.settings };
   state.shadows = saved.shadows ?? true;
