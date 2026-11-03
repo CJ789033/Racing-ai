@@ -101,7 +101,7 @@ export class TrackEditor {
     this.preview = null; this.issue = null;
     if (this.points.length >= 3) {
       try {
-        this.preview = new Track(this.points, this.width);
+        this.preview = Track.fromLoop(this.points, this.width);
         const c = this.preview.tightestCorner();
         if (c.radius < MIN_RADIUS) this.issue = { ...c, text: `Very tight corner (r≈${c.radius.toFixed(0)} m) – cars may never get round it` };
       } catch { this.preview = null; }

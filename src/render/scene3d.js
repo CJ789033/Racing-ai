@@ -11,6 +11,38 @@ const COL_LEADER = new THREE.Color('#ffc02e');
 const COL_DEAD = new THREE.Color('#5a5f66');
 const COL_DONE = new THREE.Color('#38e07b');
 
+const padTex = {};
+/** Glowing chevrons: cyan pointing forward (speed pad) or orange pointing back (slow pad). */
+function padTexture(type, strength) {
+  const k = type + strength;
+  if (padTex[k]) return padTex[k];
+  const cv = document.createElement('canvas'); cv.width = 64; cv.height = 128;
+  const x = cv.getContext('2d');
+  const boost = type === 'boost';
+  x.fillStyle = boost ? 'rgba(8,47,73,0.85)' : 'rgba(67,20,7,0.85)'; x.fillRect(0, 0, 64, 128);
+  x.fillStyle = boost ? '#22d3ee' : '#fb923c';
+  const n = strength, gap = 128 / (n + 1);
+  for (let i = 0; i < n; i++) {
+    const y = gap * (i + 1);
+    x.beginPath();
+    if (boost) { x.moveTo(8, y + 14); x.lineTo(32, y - 10); x.lineTo(56, y + 14); x.lineTo(46, y + 18); x.lineTo(32, y + 4); x.lineTo(18, y + 18); }
+    else { x.moveTo(8, y - 14); x.lineTo(32, y + 10); x.lineTo(56, y - 14); x.lineTo(46, y - 18); x.lineTo(32, y - 4); x.lineTo(18, y - 18); }
+    x.fill();
+  }
+  return (padTex[k] = new THREE.CanvasTexture(cv));
+}
+
+let glowTex = null;
+function glowTexture() {
+  if (glowTex) return glowTex;
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const x = cv.getContext('2d');
+  const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,255,255,0.8)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+  return (glowTex = new THREE.CanvasTexture(cv));
+}
+
 let stripeTex = null;
 function stripes() {
   if (stripeTex) return stripeTex;
@@ -102,78 +134,129 @@ export class Scene3D {
     const g = this.trackGroup;
     g.traverse(o => { if (o.geometry) o.geometry.dispose(); });
     g.clear();
-    const N = track.N;
+    const hw = track.halfWidth;
+    const asphaltMat = new THREE.MeshLambertMaterial({ color: '#3b3f45', side: THREE.DoubleSide });
+    const kerbMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    const deckMat = new THREE.MeshLambertMaterial({ color: '#9aa0a8', side: THREE.DoubleSide });
+    const railMat = new THREE.MeshLambertMaterial({ color: '#e5e7eb', side: THREE.DoubleSide });
+    const pillarMat = new THREE.MeshLambertMaterial({ color: '#8b9097' });
+    const asphalt = [], kerbs = [], decks = [], rails = [], pillars = [], dashes = [], tunnelWalls = [], tunnelRoofs = [];
 
-    // Asphalt ribbon
-    const ribbon = (lx, lz, rx, rz, y) => {
-      const pos = new Float32Array((N + 1) * 6), idx = [];
-      for (let i = 0; i <= N; i++) {
-        const k = i % N;
-        pos.set([lx(k), y, lz(k), rx(k), y, rz(k)], i * 6);
-        if (i < N) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    // A strip along samples i0..i1 between lateral offsets off0..off1 (+ = driver's right… along +n)
+    const strip = (i0, i1, off0, off1, y0, y1, colours) => {
+      const n = i1 - i0 + 1, pos = new Float32Array(n * 6), idx = [];
+      const col = colours ? new Float32Array(n * 6) : null;
+      for (let k = 0; k < n; k++) {
+        const i = i0 + k, h = track.ch[i];
+        pos.set([track.cx[i] + track.nx[i] * off0, h + y0, track.cz[i] + track.nz[i] * off0,
+                 track.cx[i] + track.nx[i] * off1, h + y1, track.cz[i] + track.nz[i] * off1], k * 6);
+        if (col) { const c = colours(k); col.set([...c, ...c], k * 6); }
+        if (k < n - 1) { const a = k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
       }
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      if (col) geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
       geo.setIndex(idx);
       geo.computeVertexNormals();
       return geo;
     };
-    const asphalt = new THREE.Mesh(
-      ribbon(i => track.lx[i], i => track.lz[i], i => track.rx[i], i => track.rz[i], 0.05),
-      new THREE.MeshLambertMaterial({ color: '#3b3f45', side: THREE.DoubleSide }));
-    asphalt.receiveShadow = true;
-    g.add(asphalt);
+    const stripes = k => (Math.floor(k / 2) % 2 ? [0.9, 0.12, 0.12] : [0.95, 0.95, 0.95]);
 
-    // Kerbs (red/white stripes) on both sides
-    const kerbW = 1.2;
-    for (const side of [1, -1]) {
-      const edge = (arrX, arrZ, nOff) => [i => arrX[i] + track.nx[i] * nOff * side, i => arrZ[i] + track.nz[i] * nOff * side];
-      const inner = side > 0 ? [track.lx, track.lz] : [track.rx, track.rz];
-      const [ax, az] = edge(inner[0], inner[1], 0);
-      const [bx, bz] = edge(inner[0], inner[1], kerbW);
-      const geo = ribbon(ax, az, bx, bz, 0.08);
-      const col = new Float32Array((N + 1) * 6);
-      for (let i = 0; i <= N; i++) {
-        const c = Math.floor(i / 2) % 2 ? [0.9, 0.12, 0.12] : [0.95, 0.95, 0.95];
-        col.set([...c, ...c], i * 6);
+    for (let e = 0; e < track.edgeCount.length; e++) {
+      const s = track.edgeStart[e], n = track.edgeCount[e], end = s + n - 1;
+      const junction = track.junction[s] === 1;
+      asphalt.push(strip(s, end, -hw, hw, 0.05, 0.05));
+      if (!junction) {
+        kerbs.push(strip(s, end, hw, hw + 1.2, 0.08, 0.08, stripes));
+        kerbs.push(strip(s, end, -hw - 1.2, -hw, 0.08, 0.08, stripes));
+        for (let i = s; i < end; i += 4) {
+          const p = new THREE.PlaneGeometry(0.3, track.step * 1.6);
+          p.rotateX(-Math.PI / 2);
+          p.rotateY(-Math.atan2(track.tz[i], track.tx[i]) + Math.PI / 2);
+          p.translate(track.cx[i], track.ch[i] + 0.07, track.cz[i]);
+          dashes.push(p);
+        }
       }
-      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-      g.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+      // Bridges: deck underside, side walls, rails and pillars wherever the road is raised
+      let raised = false;
+      for (let i = s; i <= end; i++) if (track.ch[i] > 0.4) { raised = true; break; }
+      if (raised) {
+        decks.push(strip(s, end, -hw - 1.2, hw + 1.2, -0.9, -0.9));
+        decks.push(strip(s, end, hw + 1.2, hw + 1.2, -0.9, 0.08));
+        decks.push(strip(s, end, -hw - 1.2, -hw - 1.2, -0.9, 0.08));
+        rails.push(strip(s, end, hw + 1.3, hw + 1.3, 0.08, 1.0));
+        rails.push(strip(s, end, -hw - 1.3, -hw - 1.3, 0.08, 1.0));
+        for (let i = s; i <= end; i += 6) {
+          const h = track.ch[i];
+          if (h < 2.5) continue;
+          for (const side of [-1, 1]) {
+            const px = track.cx[i] + track.nx[i] * side * (hw - 1), pz = track.cz[i] + track.nz[i] * side * (hw - 1);
+            if (track.onRoad(0, px, pz) && track.ch[i] > 3) continue; // never stand a pillar on the road underneath
+            const p = new THREE.BoxGeometry(1.2, h - 0.9, 1.2);
+            p.translate(px, (h - 0.9) / 2, pz);
+            pillars.push(p);
+          }
+        }
+      }
+      // Tunnels: see-through roof and walls
+      if (track.tunnel[s]) {
+        tunnelWalls.push(strip(s, end, hw + 1.3, hw + 1.3, 0, 6));
+        tunnelWalls.push(strip(s, end, -hw - 1.3, -hw - 1.3, 0, 6));
+        tunnelRoofs.push(strip(s, end, -hw - 1.8, hw + 1.8, 6, 6));
+      }
+    }
+    const add = (geos, mat, opts = {}) => {
+      if (!geos.length) return null;
+      const m = new THREE.Mesh(mergeGeometries(geos), mat);
+      if (opts.receive) m.receiveShadow = true;
+      if (opts.cast) m.castShadow = true;
+      if (opts.order) m.renderOrder = opts.order;
+      g.add(m);
+      return m;
+    };
+    add(asphalt, asphaltMat, { receive: true });
+    add(kerbs, kerbMat);
+    add(dashes, new THREE.MeshBasicMaterial({ color: '#d8d8d8' }));
+    add(decks, deckMat, { cast: true });
+    add(rails, railMat, { cast: true });
+    add(pillars, pillarMat, { cast: true });
+    add(tunnelWalls, new THREE.MeshLambertMaterial({ color: '#57534e', transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }), { order: 2 });
+    add(tunnelRoofs, new THREE.MeshLambertMaterial({ color: '#4d8a35', transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }), { order: 3 });
+
+    // Roundabout islands
+    for (const isl of track.islands) {
+      const r = isl.r - hw;
+      const grass = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.35, 40), new THREE.MeshLambertMaterial({ color: '#5aa13a' }));
+      grass.position.set(isl.x, 0.17, isl.z);
+      const curb = new THREE.Mesh(new THREE.TorusGeometry(r, 0.35, 6, 48), new THREE.MeshLambertMaterial({ color: '#e5e7eb' }));
+      curb.rotation.x = Math.PI / 2; curb.position.set(isl.x, 0.3, isl.z);
+      const statue = new THREE.Mesh(new THREE.ConeGeometry(2.2, 7, 8), new THREE.MeshLambertMaterial({ color: '#f59e0b' }));
+      statue.position.set(isl.x, 3.8, isl.z); statue.castShadow = true;
+      g.add(grass, curb, statue);
     }
 
-    // Center dashed line
-    const dashGeo = [];
-    for (let i = 0; i < N; i += 4) {
-      const p = new THREE.PlaneGeometry(0.3, track.step * 1.6);
-      p.rotateX(-Math.PI / 2);
-      p.rotateY(-Math.atan2(track.tz[i], track.tx[i]) + Math.PI / 2);
-      p.translate(track.cx[i], 0.07, track.cz[i]);
-      dashGeo.push(p);
-    }
-    g.add(new THREE.Mesh(mergeGeometries(dashGeo), new THREE.MeshBasicMaterial({ color: '#d8d8d8' })));
-
-    // Start/finish checkered line
+    // Start/finish checkered line + gantry
+    const si = track.startIndex;
+    const sdx = track.dx[si], sdz = track.dz[si], snx = -sdz, snz = sdx;
     const cv = document.createElement('canvas'); cv.width = 64; cv.height = 16;
     const cx = cv.getContext('2d');
     for (let y = 0; y < 2; y++) for (let x = 0; x < 8; x++) { cx.fillStyle = (x + y) % 2 ? '#111' : '#fff'; cx.fillRect(x * 8, y * 8, 8, 8); }
     const tex = new THREE.CanvasTexture(cv); tex.magFilter = THREE.NearestFilter;
     const line = new THREE.Mesh(new THREE.PlaneGeometry(track.width, 2), new THREE.MeshBasicMaterial({ map: tex }));
-    // orient the plane's X axis along the track normal
-    line.rotation.set(-Math.PI / 2, 0, Math.atan2(track.nz[0], track.nx[0]) * -1);
-    line.position.set(track.cx[0], 0.1, track.cz[0]);
+    line.rotation.set(-Math.PI / 2, 0, -Math.atan2(snz, snx)); // plane's X axis across the road
+    line.position.set(track.cx[si], track.ch[si] + 0.1, track.cz[si]);
     g.add(line);
-    // Gantry over the start line
     const postGeo = new THREE.BoxGeometry(0.6, 7, 0.6);
     const postMat = new THREE.MeshLambertMaterial({ color: '#ddd' });
     for (const s of [1, -1]) {
       const post = new THREE.Mesh(postGeo, postMat);
-      post.position.set(track.cx[0] + track.nx[0] * (track.halfWidth + 2) * s, 3.5, track.cz[0] + track.nz[0] * (track.halfWidth + 2) * s);
+      post.position.set(track.cx[si] + snx * (hw + 2) * s, 3.5, track.cz[si] + snz * (hw + 2) * s);
       post.castShadow = true;
       g.add(post);
     }
     const beam = new THREE.Mesh(new THREE.BoxGeometry(track.width + 4.6, 1.2, 0.8), new THREE.MeshLambertMaterial({ color: '#e0312f' }));
-    beam.position.set(track.cx[0], 7, track.cz[0]);
-    beam.rotation.y = -Math.atan2(track.nz[0], track.nx[0]);
+    beam.position.set(track.cx[si], 7, track.cz[si]);
+    beam.rotation.y = -Math.atan2(snz, snx);
     beam.castShadow = true;
     g.add(beam);
 
@@ -192,7 +275,7 @@ export class Scene3D {
       const x = minX - pad + rand() * (maxX - minX + 2 * pad);
       const z = minZ - pad + rand() * (maxZ - minZ + 2 * pad);
       let ok = true;
-      for (let i = 0; i < track.N; i += 2) {
+      for (let i = 0; i < track.N; i += 3) {
         if ((track.cx[i] - x) ** 2 + (track.cz[i] - z) ** 2 < (track.halfWidth + 9) ** 2) { ok = false; break; }
       }
       if (ok) trees.push([x, z, 0.7 + rand() * 0.8]);
@@ -215,7 +298,7 @@ export class Scene3D {
     const metal = new THREE.MeshLambertMaterial({ color: '#9ca3af' });
     for (const o of track.obstacles) {
       const g = new THREE.Group();
-      g.position.set(o.x, 0, o.z);
+      g.position.set(o.x, o.y, o.z);
       g.rotation.y = -Math.atan2(o.nz, o.nx); // local +X = across the road, local Z = along it
       if (o.type === 'spikes') {
         const plate = new THREE.Mesh(new THREE.BoxGeometry(2 * o.b, 0.15, 2 * o.a), new THREE.MeshLambertMaterial({ color: '#4b5563' }));
@@ -252,6 +335,11 @@ export class Scene3D {
         const ramp = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex }));
         ramp.castShadow = true; ramp.receiveShadow = true;
         g.add(ramp);
+      } else if (o.type === 'boost' || o.type === 'slow') {
+        const pad = new THREE.Mesh(new THREE.PlaneGeometry(2 * o.b, 2 * o.a), new THREE.MeshBasicMaterial({ map: padTexture(o.type, o.strength), transparent: true }));
+        pad.geometry.rotateX(-Math.PI / 2); // texture "up" points along the driving direction
+        pad.position.y = 0.1;
+        g.add(pad);
       } else if (o.type === 'oil') {
         const slick = new THREE.Mesh(new THREE.CircleGeometry(o.r, 24), new THREE.MeshPhongMaterial({ color: '#0b0b10', shininess: 120, specular: '#6655aa' }));
         slick.rotation.x = -Math.PI / 2; slick.scale.set(1, 0.85, 1); slick.position.y = 0.09;
@@ -275,7 +363,7 @@ export class Scene3D {
         head.position.y = -arm; head.castShadow = true; swing.add(head);
         g.add(swing);
         // hammer swings in the local X/Y plane, centred on the road
-        g.position.set(o.cx, 0, o.cz);
+        g.position.set(o.cx, o.y, o.cz);
         this.hammers.push({ o, swing, arm });
       }
       this.trackGroup.add(g);
@@ -326,6 +414,17 @@ export class Scene3D {
     for (let i = 0; i < n; i++) this.bodies.setColorAt(i, COL_ALIVE);
     this.bodies.frustumCulled = this.darks.frustumCulled = false;
     this.scene.add(this.bodies, this.darks);
+    // Glow for cars inside tunnels – drawn on top of everything so you can always spot them
+    if (this.glow) { this.scene.remove(this.glow); this.glow.geometry.dispose(); }
+    const gg = new THREE.BufferGeometry();
+    gg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    gg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    this.glow = new THREE.Points(gg, new THREE.PointsMaterial({
+      size: 30 * Math.min(window.devicePixelRatio || 1, 2), sizeAttenuation: false, // same size on screen near or far
+      map: glowTexture(), vertexColors: true, transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
+    }));
+    this.glow.frustumCulled = false; this.glow.renderOrder = 10;
+    this.scene.add(this.glow);
   }
 
   updateCars(cars, leader, dt, simTime = 0) {
@@ -334,10 +433,13 @@ export class Scene3D {
       h.swing.rotation.z = Math.asin(Math.max(-1, Math.min(1, lat / h.arm)));
     }
     const m = this._m, q = this._q, v = this._v;
+    const gp = this.glow.geometry.attributes.position, gc = this.glow.geometry.attributes.color;
     cars.forEach((c, i) => {
-      // Dead cars sink slightly into the ground and turn grey; jumping cars fly
-      v.set(c.x, c.alive || c.finished ? c.y : -0.25, c.z);
+      // Dead cars sink, turn grey and vanish after a moment; jumping cars fly
+      const gone = !c.alive && simTime - c.diedAt > 1.5;
+      v.set(c.x, c.alive ? c.roadH + c.y : c.roadH - 0.25, c.z);
       q.setFromAxisAngle(this._up, -c.heading);
+      this._s.setScalar(gone ? 0 : 1);
       if (c.airborne) {
         // nose follows the flight path
         this._q2 = this._q2 || new THREE.Quaternion(); this._ax = this._ax || new THREE.Vector3(0, 0, 1);
@@ -349,7 +451,11 @@ export class Scene3D {
       this.darks.setMatrixAt(i, m);
       const col = c === leader ? COL_LEADER : c.finished ? COL_DONE : !c.alive ? COL_DEAD : c.isElite ? COL_ELITE : COL_ALIVE;
       this.bodies.setColorAt(i, col);
+      if (c.alive && c.inTunnel) { gp.setXYZ(i, c.x, c.roadH + 1, c.z); gc.setXYZ(i, col.r, col.g, col.b); }
+      else gp.setXYZ(i, 0, -1000, 0);
     });
+    this._s.setScalar(1);
+    gp.needsUpdate = true; gc.needsUpdate = true;
     this.bodies.instanceMatrix.needsUpdate = true;
     this.darks.instanceMatrix.needsUpdate = true;
     this.bodies.instanceColor.needsUpdate = true;
@@ -360,11 +466,12 @@ export class Scene3D {
     if (leader) {
       for (let r = 0; r < RAY_ANGLES.length; r++) {
         const a = leader.heading + RAY_ANGLES[r], d = leader.rays[r];
-        pos.setXYZ(r * 2, leader.x, 0.8, leader.z);
-        pos.setXYZ(r * 2 + 1, leader.x + Math.cos(a) * d, 0.8, leader.z + Math.sin(a) * d);
+        const ry = leader.roadH + leader.y + 0.8;
+        pos.setXYZ(r * 2, leader.x, ry, leader.z);
+        pos.setXYZ(r * 2 + 1, leader.x + Math.cos(a) * d, ry, leader.z + Math.sin(a) * d);
       }
       pos.needsUpdate = true;
-      this.marker.position.set(leader.x, 4 + Math.sin(performance.now() / 200) * 0.4, leader.z);
+      this.marker.position.set(leader.x, leader.roadH + leader.y + 4 + Math.sin(performance.now() / 200) * 0.4, leader.z);
       this.marker.visible = this.cameraMode !== 'follow';
     }
 
@@ -378,10 +485,12 @@ export class Scene3D {
     if (!leader) return;
     const k = 1 - Math.exp(-dt * 4);
     if (this.cameraMode === 'follow') {
-      const back = 14, up = 6;
+      const back = 14, base = leader.roadH + leader.y;
+      // inside a tunnel the camera ducks under the roof
+      const up = leader.inTunnel ? 4 : 6;
       const tx = leader.x - Math.cos(leader.heading) * back, tz = leader.z - Math.sin(leader.heading) * back;
-      this.followPos.lerp(this._v.set(tx, up, tz), k);
-      this.followLook.lerp(this._v.set(leader.x + Math.cos(leader.heading) * 8, 1, leader.z + Math.sin(leader.heading) * 8), k);
+      this.followPos.lerp(this._v.set(tx, base + up, tz), k);
+      this.followLook.lerp(this._v.set(leader.x + Math.cos(leader.heading) * 8, base + 1, leader.z + Math.sin(leader.heading) * 8), k);
       this.camera.position.copy(this.followPos);
       this.camera.lookAt(this.followLook);
     } else if (this.cameraMode === 'top') {

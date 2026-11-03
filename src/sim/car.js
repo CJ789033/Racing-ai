@@ -1,31 +1,36 @@
-// Simple top-down car physics + sensors. Everything happens on the XZ plane.
+// Top-down car physics + sensors on the road network.
+// The car keeps a velocity vector separate from its heading, so when grip is
+// low (oil) it slides sideways and can spin; on normal tarmac the tyres kill
+// the sideways motion almost instantly.
 import { obstacleContact, obstacleRay } from './obstacles.js';
 
 export const CAR = {
-  maxSpeed: 48,      // m/s (~170 km/h)
+  maxSpeed: 48,      // m/s (~170 km/h) at speed level 0
   engine: 11,        // m/s^2 at full throttle (falls off towards top speed)
   brake: 26,         // m/s^2 at full brake
   drag: 0.012,       // aero drag coefficient (per m/s)
   rolling: 0.6,      // m/s^2 rolling resistance
   wheelBase: 2.6,    // metres
   maxSteer: 0.55,    // radians at standstill
-  grip: 17,          // max lateral acceleration (m/s^2) before understeer
+  grip: 17,          // max lateral acceleration (m/s^2)
+  oilGrip: 0.1,      // fraction of grip left on oil
   length: 4.2, width: 1.9,
 };
 
 // Sensor ray angles relative to heading (radians)
 export const RAY_ANGLES = [-80, -45, -22, -8, 0, 8, 22, 45, 80].map(d => d * Math.PI / 180);
 export const RAY_LENGTH = 70;
-// Distances (m) to the look-ahead points on the centerline
+// Distances (m) to the look-ahead points on the road (along the shortest route)
 export const LOOKAHEAD = [10, 25, 45, 70];
-// Inputs: rays + speed + lateral offset + direction to each look-ahead point
-export const INPUT_SIZE = RAY_ANGLES.length + 2 + LOOKAHEAD.length;
+// Inputs: rays + speed + lateral offset + look-ahead directions + speed level + sideways slide
+export const INPUT_SIZE = RAY_ANGLES.length + 2 + LOOKAHEAD.length + 2;
 export const OUTPUT_SIZE = 2; // steer, throttle/brake
 
-const STALL_TIME = 3;   // seconds without progress -> eliminated
 const GRAVITY = 9.81;
-const RAMP_LIFT = 0.25;   // vertical launch speed per m/s of forward speed (~14° ramp)
-const RAMP_MAX_VY = 9;
+const STOP_SPEED = 2;      // m/s – slower than this counts as "stopped"
+const STOP_TIME = 2;       // seconds stopped -> eliminated
+const NO_PROGRESS_TIME = 10; // seconds without a new best distance -> eliminated
+export const SPEED_LEVEL_STEP = 0.15; // each speed level = ±15 % top speed & power
 
 export class Car {
   constructor(brain, track) {
@@ -38,40 +43,51 @@ export class Car {
 
   reset() {
     const tr = this.track;
-    this.x = tr.cx[0]; this.z = tr.cz[0];
-    this.heading = Math.atan2(tr.tz[0], tr.tx[0]);
-    this.speed = 0;
+    const s = tr.startIndex;
+    this.x = tr.cx[s]; this.z = tr.cz[s];
+    this.heading = Math.atan2(tr.dz[s], tr.dx[s]);
+    this.vx = 0; this.vz = 0;
+    this.speed = 0;            // forward speed
+    this.slip = 0;             // sideways speed
     this.steer = 0; this.throttle = 0;
-    this.seg = 0; this.segT = 0; this.lateral = 0;
-    this.laps = 0;
-    this.progress = 0;        // in segments, continuous
+    this.seg = s; this.lateral = 0; this.roadH = tr.ch[s];
+    this.progress = 0;         // metres of the lap done (lapLength - distance left)
     this.maxProgress = 0;
     this.lastProgressTime = 0;
+    this.stoppedTime = 0;
     this.time = 0;
     this.distance = 0;
     this.alive = true;
-    this.finished = false;
+    this.finished = false;     // finished cars keep driving a victory lap
     this.lapTime = null;
     this.crashed = false;
+    this.stalled = false;
+    this.diedAt = 0;
     this.onOil = false;
+    this.inTunnel = false;
     this.killedBy = null;
-    this.y = 0; this.vy = 0;  // height above the road (jumps)
+    this.y = 0; this.vy = 0;   // height above the road (jumps)
     this.airborne = false;
     this.jumps = 0;
+    this.speedLevel = 0;       // -4 … +4 from speed / slow pads
+    this.padInside = new Uint8Array(tr.obstacles.length);
     this.fitness = 0;
   }
+
+  get racing() { return this.alive && !this.finished; }
+  get speedFactor() { return 1 + SPEED_LEVEL_STEP * this.speedLevel; }
 
   sense() {
     const tr = this.track, inp = this.inputs;
     const h = this.heading;
+    const level = tr.level[this.seg];
     for (let r = 0; r < RAY_ANGLES.length; r++) {
       const a = h + RAY_ANGLES[r];
       const dx = Math.cos(a), dz = Math.sin(a);
-      let d = tr.raycast(this.x, this.z, dx, dz, this.seg, RAY_LENGTH);
-      // obstacles ahead are "seen" by the same rays (oil isn't visible)
+      let d = tr.raycast(this.x, this.z, dx, dz, level, RAY_LENGTH);
+      // hammers, spikes and crates are "seen" by the same rays
       for (const o of tr.obstacles) {
-        const sd = tr.segDiff(this.seg, o.seg);
-        if (sd < -6 || sd > 40) continue;
+        if ((o.x - this.x) ** 2 + (o.z - this.z) ** 2 > (RAY_LENGTH + 10) ** 2 || Math.abs(o.y - this.roadH) > 2.5) continue;
         d = Math.min(d, obstacleRay(o, this.x, this.z, dx, dz, this.time, d));
       }
       this.rays[r] = d;
@@ -79,14 +95,17 @@ export class Car {
     }
     let k = RAY_ANGLES.length;
     inp[k++] = this.speed / CAR.maxSpeed;
-    inp[k++] = this.lateral / tr.halfWidth;
-    // Where is the road going? Angle from the car's heading to centerline
-    // points further ahead (like a driver looking through the corner).
+    inp[k++] = clamp(this.lateral / tr.halfWidth, -1.5, 1.5);
+    // Where is the road going? Angle from the car's heading to road points
+    // further along the best route (like a driver looking through the corner).
+    let idx = this.seg, walked = 0;
     for (const ahead of LOOKAHEAD) {
-      const idx = tr.wrap(this.seg + Math.round(ahead / tr.step));
+      while (walked < ahead) { const n = tr.next[idx]; if (n === idx) break; idx = n; walked += tr.step; }
       const ang = Math.atan2(tr.cz[idx] - this.z, tr.cx[idx] - this.x);
       inp[k++] = clamp(angleDiff(ang, h) / (Math.PI / 2), -1, 1);
     }
+    inp[k++] = this.speedLevel / 4;
+    inp[k++] = clamp(this.slip / 10, -1, 1);
     return inp;
   }
 
@@ -99,115 +118,152 @@ export class Car {
   /** Advance physics by dt seconds. */
   step(dt) {
     if (!this.alive) return;
-    const c = CAR;
+    const c = CAR, tr = this.track;
     const px = this.x, pz = this.z;
+    this.time += dt;
+    this.dt = dt;
+
     if (this.airborne) {
       // Flying: no grip, so no steering, throttle or brakes – just a ballistic arc
       this.vy -= GRAVITY * dt;
       this.y += this.vy * dt;
-      this.x += Math.cos(this.heading) * this.speed * dt;
-      this.z += Math.sin(this.heading) * this.speed * dt;
-      this.distance += this.speed * dt;
-      this.time += dt;
-      this.updateTrackPosition();
+      this.x += this.vx * dt; this.z += this.vz * dt;
+      this.distance += Math.hypot(this.vx, this.vz) * dt;
+      const nr = this.updateTrackPosition();
+      if (!this.alive) return;
       if (this.y > 0) { this.checkEnd(); return; }
       this.y = 0; this.vy = 0; this.airborne = false;
-      this.speed *= 0.93; // landing costs a little speed
-      const landed = this.track.nearest(this.x, this.z, this.seg);
-      if (landed.dist > this.track.halfWidth) { this.alive = false; this.crashed = true; this.killedBy = 'landing'; return; }
+      this.vx *= 0.93; this.vz *= 0.93; // landing costs a little speed
+      if (nr.dist > tr.halfWidth) { this.die('landing'); return; }
       this.checkEnd();
       return;
     }
+
     this.think();
+    const fx = Math.cos(this.heading), fz = Math.sin(this.heading);
+    let vf = this.vx * fx + this.vz * fz;          // forward speed
+    let vl = -this.vx * fz + this.vz * fx;         // sideways speed (+ = right)
+    const grip = c.grip * (this.onOil ? c.oilGrip : 1);
+    const traction = this.onOil ? 0.25 : 1;
+    const maxS = c.maxSpeed * this.speedFactor;
+
     // Longitudinal
     let accel;
-    if (this.throttle >= 0) accel = this.throttle * c.engine * (1 - 0.6 * this.speed / c.maxSpeed);
+    if (this.throttle >= 0) accel = this.throttle * c.engine * this.speedFactor * (1 - 0.6 * vf / maxS);
     else accel = this.throttle * c.brake;
-    accel -= c.drag * this.speed * this.speed / 10 + (this.speed > 0 ? c.rolling : 0);
-    this.speed = clamp(this.speed + accel * dt, 0, c.maxSpeed);
+    accel = accel * traction - (c.drag * vf * vf / 10 + (vf > 0 ? c.rolling : 0));
+    vf = clamp(vf + accel * dt, 0, maxS);
 
-    // Lateral: kinematic bicycle, limited by tyre grip (understeer)
-    const steerAngle = this.steer * c.maxSteer / (1 + this.speed / 30);
-    let yawRate = this.speed * Math.tan(steerAngle) / c.wheelBase;
-    const latAcc = Math.abs(yawRate * this.speed);
-    const grip = this.onOil ? c.grip * 0.25 : c.grip;
-    if (latAcc > grip) {
+    // Steering: kinematic bicycle, yaw limited by tyre grip (understeer)
+    const steerAngle = this.steer * c.maxSteer / (1 + vf / 30);
+    let yawRate = vf * Math.tan(steerAngle) / c.wheelBase;
+    const latAcc = Math.abs(yawRate * vf);
+    if (this.onOil) {
+      // On oil the car still rotates when steered, but its momentum carries it
+      // on in the old direction – it slides sideways, and a slide turns into a spin
+      yawRate = yawRate * 0.8 + vl * 0.06;
+    } else if (latAcc > grip) {
       yawRate *= grip / latAcc;
-      // scrubbing tyres costs speed
-      this.speed = Math.max(0, this.speed - (latAcc - grip) * 0.15 * dt);
+      vf = Math.max(0, vf - (latAcc - grip) * 0.15 * dt); // scrubbing tyres costs speed
     }
-    this.heading += yawRate * dt;
-    const vx = Math.cos(this.heading) * this.speed, vz = Math.sin(this.heading) * this.speed;
-    this.x += vx * dt; this.z += vz * dt;
-    this.distance += this.speed * dt;
-    this.time += dt;
 
-    const tr = this.track;
+    // Tyres fight sideways sliding (almost not at all on oil)
+    const fric = grip * dt;
+    vl = Math.abs(vl) <= fric ? 0 : vl - Math.sign(vl) * fric;
+
+    this.vx = vf * fx - vl * fz;
+    this.vz = vf * fz + vl * fx;
+    this.speed = vf; this.slip = vl;
+    this.heading += yawRate * dt;
+    this.x += this.vx * dt; this.z += this.vz * dt;
+    this.distance += Math.hypot(this.vx, this.vz) * dt;
+
     const nr = this.updateTrackPosition();
+    if (!this.alive) return;
 
     // Obstacles
     this.onOil = false;
     let dead = null;
     for (const o of tr.obstacles) {
-      const sd = tr.segDiff(this.seg, o.seg);
-      if (sd < -4 || sd > 4) continue;
+      if ((o.x - this.x) ** 2 + (o.z - this.z) ** 2 > 225 || Math.abs(o.y - this.roadH) > 2.5) { this.padInside[o.index] = 0; continue; }
       const hit = obstacleContact(o, this.x, this.z, this.time);
       if (hit === 'dead') dead = o.type;
-      else if (hit === 'solid') { this.x = px; this.z = pz; this.speed = 0; }
+      else if (hit === 'solid') { this.x = px; this.z = pz; this.vx = 0; this.vz = 0; this.speed = 0; }
       else if (hit === 'oil') this.onOil = true;
       else if (hit === 'ramp' && !dead) {
-        // Launch! Faster cars fly higher and further
+        // Launch! Faster cars and steeper ramps fly higher and further
         this.airborne = true;
-        this.vy = Math.min(RAMP_MAX_VY, this.speed * RAMP_LIFT);
+        this.vy = Math.min(o.maxVy, Math.max(0, vf) * o.lift);
         this.y = 0.01;
         this.jumps++;
+      } else if (hit === 'boost' || hit === 'slow') {
+        if (!this.padInside[o.index]) {
+          // each pass over a pad shifts the speed level; stacks, capped at ±4
+          const before = this.speedFactor;
+          this.speedLevel = clamp(this.speedLevel + (hit === 'boost' ? o.strength : -o.strength), -4, 4);
+          const k = this.speedFactor / before;
+          this.vx *= k; this.vz *= k; this.speed *= k;
+        }
       }
+      this.padInside[o.index] = hit === 'boost' || hit === 'slow' ? 1 : 0;
     }
 
-    // Termination conditions
-    if (dead) { this.alive = false; this.crashed = true; this.killedBy = dead; }
-    else if (nr.dist > tr.halfWidth) { this.alive = false; this.crashed = true; }
-    else this.checkEnd();
+    if (dead) { this.die(dead); return; }
+    if (nr.dist > tr.halfWidth) { this.die('offroad'); return; }
+    this.checkEnd();
   }
 
-  /** Find where the car is along the track and update lap progress. */
+  die(reason) {
+    this.alive = false;
+    this.crashed = reason !== 'stopped';
+    this.stalled = reason === 'stopped';
+    this.killedBy = reason;
+    this.diedAt = this.time;
+  }
+
+  /** Find where the car is on the network and update lap progress. */
   updateTrackPosition() {
     const tr = this.track;
-    const prevSeg = this.seg;
     const nr = tr.nearest(this.x, this.z, this.seg);
-    this.seg = nr.index; this.segT = nr.t; this.lateral = nr.lateral;
-    if (prevSeg > tr.N * 0.75 && this.seg < tr.N * 0.25) this.laps++;
-    else if (prevSeg < tr.N * 0.25 && this.seg > tr.N * 0.75) this.laps--;
-    this.progress = this.laps * tr.N + this.seg + this.segT;
-    if (this.progress > this.maxProgress + 0.5) {
-      this.maxProgress = this.progress;
-      this.lastProgressTime = this.time;
-    }
+    this.seg = nr.index; this.lateral = nr.lateral;
+    this.roadH = tr.heightAt(nr.index, nr.t);
+    this.inTunnel = tr.tunnel[nr.index] === 1;
+    if (this.finished) return nr; // victory lap: just keep driving
+    const prev = this.progress;
+    const prog = tr.lapLength - nr.D;
+    if (prog - prev > 25) { this.die('wrongway'); return nr; } // reversed over the start line
+    this.progress = prog;
+    if (prog > this.maxProgress + 1) { this.maxProgress = prog; this.lastProgressTime = this.time; }
     return nr;
   }
 
-  /** Stalled, going backwards, or finished? */
+  /** Stopped, stuck, or finished? */
   checkEnd() {
     const tr = this.track;
-    if (this.time - this.lastProgressTime > STALL_TIME) this.alive = false;
-    else if (this.progress < -3) this.alive = false;
-    else if (this.progress >= tr.N) {
-      this.alive = false;
+    if (!this.finished && this.maxProgress > tr.lapLength * 0.5 && tr.lapLength - this.progress < 1.5) {
       this.finished = true;
       this.lapTime = this.time;
+      this.maxProgress = tr.lapLength;
+      return;
     }
+    // cars that just sit there are removed quickly (and score lower than crashing)
+    if (!this.airborne && Math.abs(this.speed) < STOP_SPEED && this.time > 1.5) this.stoppedTime += this.dt;
+    else this.stoppedTime = 0;
+    if (this.finished) { if (this.stoppedTime > STOP_TIME) this.die('parked'); return; }
+    if (this.stoppedTime > STOP_TIME) this.die('stopped');
+    else if (this.time - this.lastProgressTime > NO_PROGRESS_TIME) this.die('stopped');
   }
 
   computeFitness() {
     const tr = this.track;
-    const frac = Math.max(0, this.maxProgress) / tr.N;
+    const frac = Math.max(0, this.maxProgress) / tr.lapLength;
     if (this.finished) {
       // Every finisher beats every non-finisher; faster lap = higher fitness
-      const avgSpeed = tr.length / this.lapTime;
+      const avgSpeed = tr.lapLength / this.lapTime;
       this.fitness = 2 + 3 * avgSpeed / CAR.maxSpeed;
     } else {
-      const avgSpeed = (frac * tr.length) / Math.max(1, this.time);
-      this.fitness = frac + 0.15 * frac * (avgSpeed / CAR.maxSpeed) - (this.crashed ? 0.002 : 0);
+      const avgSpeed = (frac * tr.lapLength) / Math.max(1, this.time);
+      this.fitness = frac + 0.15 * frac * (avgSpeed / CAR.maxSpeed) - (this.crashed ? 0.002 : 0) - (this.stalled ? 0.02 : 0);
     }
     return this.fitness;
   }

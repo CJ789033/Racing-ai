@@ -1,31 +1,49 @@
 // Obstacles placed on the track: geometry, collision and sensor raycasts.
-// Positions are given as distance along the lap (s) + lane; lanes are relative
-// to the driving direction.
+// Each obstacle sits on one road edge at a fraction of its length, in a lane
+// relative to the driving direction.
+import { obstacleParam } from './tiles.js';
 
 export const CAR_RADIUS = 1.1;
 
-/** Size/placement of an obstacle type for a given track half-width (metres). */
-export function obstacleLayout(type, lane, hw) {
-  const side = lane === 'left' ? -1 : lane === 'right' ? 1 : 0; // +1 = along the track's +normal (driver's right)
+const WIDTH_FRAC = { narrow: 0.25, wide: 0.7, full: 1 };
+export const HAMMER_PERIOD = { slow: 3.6, normal: 2.4, fast: 1.5 };
+export const RAMP = { // vertical launch speed per m/s of speed, cap, visual height
+  low: { lift: 0.15, maxVy: 6, h: 0.9 },
+  normal: { lift: 0.25, maxVy: 9, h: 1.5 },
+  steep: { lift: 0.38, maxVy: 13, h: 2.6 },
+};
+
+/** Size/placement of an obstacle for a given road half-width (metres). */
+export function obstacleLayout(o, hw) {
+  const type = o.type;
+  const side = o.lane === 'left' ? -1 : o.lane === 'right' ? 1 : 0; // +1 = driver's right
+  const width = obstacleParam(o, 'width');
+  // half-width across the road: explicit width option, else the type's normal size
+  const across = (normalCentre, normalSide) =>
+    width && width !== 'normal' ? hw * WIDTH_FRAC[width] : side ? hw * normalSide : hw * normalCentre;
+  const place = b => (width === 'full' || !side ? 0 : side * (hw - b)); // keep side obstacles against the edge
   switch (type) {
-    case 'spikes': return { lat: side * hw * 0.5, a: 1.3, b: side ? hw * 0.5 : hw * 0.4 };
-    case 'crates': return { lat: side * hw * 0.5, a: 1.6, b: side ? hw * 0.5 : hw * 0.35 };
-    case 'oil':    return { lat: side * hw * 0.45, r: hw * 0.6 };
-    case 'hammer': return { lat: 0, amp: hw * 0.85, headR: 1.6, period: 2.4 };
-    case 'ramp':   return { lat: side * hw * 0.5, a: 3, b: side ? hw * 0.5 : hw * 0.45, h: 1.5 };
+    case 'spikes': { const b = across(0.4, 0.5); return { lat: place(b), a: 1.3, b }; }
+    case 'crates': { const b = side ? hw * 0.5 : hw * 0.35; return { lat: side * hw * 0.5, a: 1.6, b }; }
+    case 'oil':    return { lat: side * hw * 0.45, r: hw * 0.7 };
+    case 'hammer': return { lat: 0, amp: hw * 0.85, headR: 1.6, period: HAMMER_PERIOD[obstacleParam(o, 'speed')] };
+    case 'ramp':   { const b = across(0.45, 0.5); const R = RAMP[obstacleParam(o, 'angle')]; return { lat: place(b), a: 3, b, ...R }; }
+    case 'boost':
+    case 'slow':   { const b = across(0.45, 0.5); return { lat: place(b), a: 2.5, b, strength: obstacleParam(o, 'strength') }; }
     default: return { lat: 0 };
   }
 }
 
-/** Resolve obstacle definitions into world geometry for a built Track. */
+/** Resolve obstacle definitions ({type, edge, pos, lane, ...}) into world geometry. */
 export function prepareObstacles(track, defs) {
   return (defs || []).map((d, i) => {
-    const seg = track.wrap(Math.round(d.s / track.step));
-    const L = obstacleLayout(d.type, d.lane, track.halfWidth);
+    const seg = track.pointOnEdge(d.edge, d.pos);
+    const L = obstacleLayout(d, track.halfWidth);
+    const tx = track.dx[seg], tz = track.dz[seg];
     const o = {
-      type: d.type, lane: d.lane, seg, ...L,
-      tx: track.tx[seg], tz: track.tz[seg], nx: track.nx[seg], nz: track.nz[seg],
-      cx: track.cx[seg], cz: track.cz[seg],
+      ...d, ...L, seg, index: i,
+      tx, tz, nx: -tz, nz: tx,           // along the driving direction / to the driver's right
+      cx: track.cx[seg], cz: track.cz[seg], y: track.ch[seg],
       phase: (i * 2.1) % (Math.PI * 2),
     };
     o.x = o.cx + o.nx * L.lat;
@@ -37,26 +55,27 @@ export function prepareObstacles(track, defs) {
 /** Lateral offset of a hammer's head at time t. */
 export function hammerLat(o, t) { return o.amp * Math.sin((2 * Math.PI * t) / o.period + o.phase); }
 
+function inRect(o, x, z, pad) {
+  const dx = x - o.x, dz = z - o.z;
+  const u = dx * o.tx + dz * o.tz, v = dx * o.nx + dz * o.nz;
+  return Math.abs(u) < o.a + pad && Math.abs(v) < o.b + pad ? u : null;
+}
+
 /**
  * What happens to a car at (x, z) at time t?
- * Returns 'dead' (lethal), 'solid' (blocked), 'oil' (slippery) or null.
+ * Returns 'dead', 'solid', 'oil', 'ramp', 'boost', 'slow' or null.
  */
 export function obstacleContact(o, x, z, t) {
   switch (o.type) {
-    case 'spikes':
-    case 'crates': {
-      const dx = x - o.x, dz = z - o.z;
-      const u = dx * o.tx + dz * o.tz, v = dx * o.nx + dz * o.nz;
-      if (Math.abs(u) < o.a + CAR_RADIUS && Math.abs(v) < o.b + CAR_RADIUS) return o.type === 'spikes' ? 'dead' : 'solid';
-      return null;
-    }
-    case 'oil':
-      return (x - o.x) ** 2 + (z - o.z) ** 2 < o.r * o.r ? 'oil' : null;
+    case 'spikes': return inRect(o, x, z, CAR_RADIUS) !== null ? 'dead' : null;
+    case 'crates': return inRect(o, x, z, CAR_RADIUS) !== null ? 'solid' : null;
+    case 'boost':
+    case 'slow':   return inRect(o, x, z, 0) !== null ? o.type : null;
+    case 'oil':    return (x - o.x) ** 2 + (z - o.z) ** 2 < o.r * o.r ? 'oil' : null;
     case 'ramp': {
       // launches the car once its centre reaches the top half of the ramp
-      const dx = x - o.x, dz = z - o.z;
-      const u = dx * o.tx + dz * o.tz, v = dx * o.nx + dz * o.nz;
-      return u > 0 && u < o.a && Math.abs(v) < o.b ? 'ramp' : null;
+      const u = inRect(o, x, z, 0);
+      return u !== null && u > 0 ? 'ramp' : null;
     }
     case 'hammer': {
       const lat = hammerLat(o, t);
@@ -67,7 +86,7 @@ export function obstacleContact(o, x, z, t) {
   return null;
 }
 
-/** Distance along a ray to the obstacle (maxT if missed). Oil and ramps are too low to be "seen". */
+/** Distance along a ray to the obstacle (maxT if missed). Flat things (oil, ramps, pads) can't be "seen". */
 export function obstacleRay(o, ox, oz, dx, dz, t, maxT) {
   if (o.type === 'spikes' || o.type === 'crates') {
     // ray vs oriented rectangle (slab method in the obstacle's frame)

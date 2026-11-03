@@ -3,11 +3,12 @@ import { Evolution, DEFAULT_SETTINGS, DT } from './sim/evolution.js';
 import { Scene3D } from './render/scene3d.js';
 import { TrackEditor } from './ui/editor.js';
 import { TileEditor } from './ui/tileEditor.js';
-import { TILE_PRESETS, traceLayout, COLS, ROWS } from './sim/tiles.js';
+import { TILE_PRESETS, traceLayout, COLS, ROWS, PIECES } from './sim/tiles.js';
 import { drawNetwork, drawChart } from './ui/panels.js';
 
 const $ = id => document.getElementById(id);
-const SAVE_KEY = 'racing-ai-save-v2';
+const SAVE_KEY = 'racing-ai-save-v3';
+const OLD_SAVE_KEYS = ['racing-ai-save-v2']; // tracks are kept, brains (different inputs) are not
 const SPEEDS = [1, 2, 5, 10, 25, 'MAX'];
 
 // ---------------------------------------------------------------- state
@@ -88,9 +89,9 @@ function buildTrack(def) {
   if (def.kind === 'tiles') {
     const res = traceLayout(def.tiles);
     if (!res.ok) throw new Error(res.error.msg);
-    return new Track(res.points, def.width, { polyline: true, obstacles: res.obstacles });
+    return new Track(res.net, def.width);
   }
-  return new Track(def.points, def.width);
+  return Track.fromLoop(def.points, def.width);
 }
 
 function currentDef() {
@@ -140,7 +141,15 @@ function save() {
 }
 
 function load() {
-  try { return JSON.parse(localStorage.getItem(SAVE_KEY)); } catch { return null; }
+  try {
+    const cur = JSON.parse(localStorage.getItem(SAVE_KEY));
+    if (cur) return cur;
+    for (const k of OLD_SAVE_KEYS) {
+      const old = JSON.parse(localStorage.getItem(k));
+      if (old && old.track) return { track: old.track, settings: old.settings, shadows: old.shadows };
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 // ---------------------------------------------------------------- modes
@@ -168,7 +177,7 @@ function startRace({ fromSave = null, reset = false } = {}) {
       generation: fromSave.generation || 1,
       bestLap: fromSave.bestLap ?? null,
       bestFitness: fromSave.bestFitness ?? -Infinity,
-      bestGenome: fromSave.bestGenome ? Float32Array.from(fromSave.bestGenome) : null,
+      bestGenome: fromSave.bestGenome && fromSave.bestGenome.length === state.evo.cars[0].brain.size ? Float32Array.from(fromSave.bestGenome) : null,
       history: fromSave.history || [],
     });
   } else if (reset || !state.evo || trackChanged) {
@@ -197,7 +206,7 @@ function updateEditorInfo(ed) {
   let info = '', issue = null;
   if (ed === tileEditor) {
     const res = ed.result;
-    if (ed.preview) info = `✅ Closed loop · ${ed.preview.length.toFixed(0)} m · ${res.order.length} pieces` + (res.unused ? ` · ${res.unused} unused` : '');
+    if (ed.preview) info = `✅ Ready · ${res.order.some(t => PIECES[t.type].junction) ? 'shortest lap' : 'lap'} ${ed.preview.lapLength.toFixed(0)} m · ${res.order.length} pieces` + (res.unused ? ` · ${res.unused} unused` : '');
     else if (ed.tiles.length) issue = res.error ? res.error.msg : null;
     else info = 'Start by dragging the Start piece onto the grid';
   } else {
@@ -365,7 +374,8 @@ function frame(now) {
     $('sGen').textContent = evo.generation;
     $('sAlive').textContent = `${evo.aliveCount} / ${evo.cars.length}`;
     $('sTime').textContent = `${evo.time.toFixed(1)} / ${evo.timeLimit.toFixed(0)} s`;
-    $('sSpeed').textContent = leader ? `${(leader.speed * 3.6).toFixed(0)} km/h · ${Math.min(100, Math.max(0, leader.progress / state.track.N * 100)).toFixed(0)}%` : '-';
+    const lvl = leader && leader.speedLevel ? ` · ${leader.speedLevel > 0 ? '⏩+' : '🐢'}${leader.speedLevel}` : '';
+    $('sSpeed').textContent = leader ? `${(leader.speed * 3.6).toFixed(0)} km/h · ${Math.min(100, Math.max(0, (leader.finished ? 1 : leader.progress / state.track.lapLength) * 100)).toFixed(0)}%${lvl}` : '-';
     $('sBest').textContent = evo.bestLap ? evo.bestLap.toFixed(2) + ' s' : '–';
     const ls = evo.lastStats;
     $('sLast').textContent = ls ? (ls.bestLap ? `${ls.bestLap.toFixed(2)} s (${ls.finishers}🏁)` : `${(ls.bestProgress * 100).toFixed(0)}%`) : '–';

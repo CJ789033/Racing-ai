@@ -43,7 +43,8 @@ export class Evolution {
     this.cars = genomes.map(g => new Car(new NeuralNet(this.layers, g), track));
   }
 
-  get aliveCount() { let c = 0; for (const car of this.cars) if (car.alive) c++; return c; }
+  /** Cars still trying to finish their lap (finished cars drive on for show). */
+  get aliveCount() { let c = 0; for (const car of this.cars) if (car.racing) c++; return c; }
 
   /** Time limit for the current generation. */
   get timeLimit() {
@@ -55,7 +56,8 @@ export class Evolution {
   leader() {
     let best = null, bp = -Infinity;
     for (const c of this.cars) {
-      const p = c.progress + (c.alive ? 1e6 : 0) + (c.finished ? 2e6 - c.lapTime : 0);
+      // follow the best car still racing; once all are done, the fastest finisher
+      const p = c.racing ? 1e6 + c.progress : c.finished ? (c.alive ? 5e5 : 4e5) - c.lapTime : c.progress;
       if (p > bp) { bp = p; best = c; }
     }
     return best;
@@ -65,7 +67,7 @@ export class Evolution {
   step() {
     this.time += DT;
     let alive = 0;
-    for (const c of this.cars) { c.step(DT); if (c.alive) alive++; }
+    for (const c of this.cars) { c.step(DT); if (c.racing) alive++; }
     if (alive === 0 || this.time >= this.timeLimit) { this.nextGeneration(); return true; }
     return false;
   }
@@ -83,7 +85,7 @@ export class Evolution {
       generation: this.generation,
       bestFitness: best.fitness,
       avgFitness,
-      bestProgress: Math.min(1, best.maxProgress / this.track.N),
+      bestProgress: Math.min(1, best.maxProgress / this.track.lapLength),
       bestLap: genBestLap,
       finishers: finishers.length,
     };
@@ -116,7 +118,7 @@ export class Evolution {
       const scale = this.bestLap ? S.fineTuneScale : S.fineTuneScale * 2.5;
       const r = Math.random();
       if (r < share) this.mutate(child, S.mutationRate * scale, S.mutationStrength * scale); // fine-tune
-      else if (r < share + (1 - share) * 0.7) this.mutate(child, S.mutationRate, S.mutationStrength);        // normal
+      else if (r < share + (1 - share) * 0.7) this.mutate(child, S.mutationRate, S.mutationStrength); // normal
       else this.mutate(child, S.mutationRate * boost, S.mutationStrength * boost * 1.5); // explore
       next.push(child);
     }
