@@ -11,6 +11,8 @@ const SAMPLE_STEP = 2;  // metres between centerline samples
 const RASTER = 0.5;     // metres per raster cell
 const LEVEL_HEIGHT = 3; // road higher than this counts as the upper level
 const SEARCH_HOPS = 10; // how far (in samples) to look for the nearest road
+// height levels: 0 = ground, 1 = up on a bridge, 2 = down in a tunnel
+const levelOf = h => (h >= LEVEL_HEIGHT ? 1 : h <= -LEVEL_HEIGHT ? 2 : 0);
 
 function catmullRom(p0, p1, p2, p3, t) {
   const t2 = t * t, t3 = t2 * t;
@@ -96,7 +98,7 @@ export class Track {
     all.forEach((p, i) => {
       this.cx[i] = p.x; this.cz[i] = p.z; this.ch[i] = p.h; this.edgeOf[i] = p.e;
       this.tunnel[i] = p.tunnel ? 1 : 0; this.junction[i] = p.junction ? 1 : 0;
-      this.level[i] = p.h >= LEVEL_HEIGHT ? 1 : 0;
+      this.level[i] = levelOf(p.h);
     });
     for (let e = 0; e < E; e++) {
       const s = this.edgeStart[e], n = this.edgeCount[e];
@@ -199,7 +201,7 @@ export class Track {
     const pad = hw + 4;
     this.gx0 = minX - pad; this.gz0 = minZ - pad;
     this.gw = Math.ceil((maxX - minX + 2 * pad) / RASTER); this.gh = Math.ceil((maxZ - minZ + 2 * pad) / RASTER);
-    this.grids = [new Uint8Array(this.gw * this.gh), new Uint8Array(this.gw * this.gh)];
+    this.grids = [0, 1, 2].map(() => new Uint8Array(this.gw * this.gh));
     for (let e = 0; e < E; e++) {
       const s = this.edgeStart[e], n = this.edgeCount[e];
       for (let k = 0; k < n - 1; k++) this.rasterSegment(s + k, s + k + 1);
@@ -210,7 +212,7 @@ export class Track {
   }
 
   rasterSegment(i, j) {
-    const hw = this.halfWidth, grid = this.grids[(this.ch[i] + this.ch[j]) / 2 >= LEVEL_HEIGHT ? 1 : 0];
+    const hw = this.halfWidth, grid = this.grids[levelOf((this.ch[i] + this.ch[j]) / 2)];
     const ax = this.cx[i], az = this.cz[i], bx = this.cx[j], bz = this.cz[j];
     const sx = bx - ax, sz = bz - az, L2 = sx * sx + sz * sz || 1e-6;
     const c0 = Math.max(0, Math.floor((Math.min(ax, bx) - hw - this.gx0) / RASTER));

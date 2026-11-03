@@ -27,10 +27,12 @@ export const opp = e => (e + 2) % 4;
 
 const LEN = (options, def = 1) => ({ label: 'Length', options, default: def, names: options.map(v => `${v * CELL}m`) });
 const TUNNEL = { label: 'Tunnel', options: [0, 1], default: 0, names: ['Off', 'On'] };
+export const TUNNEL_DEPTH = 7; // metres below ground
 
 export const PIECES = {
   start:      { label: 'Start',      params: { len: LEN([1, 2, 3]) } },
-  straight:   { label: 'Straight',   params: { len: LEN([1, 2, 3, 4]), tunnel: TUNNEL } },
+  straight:   { label: 'Straight',   params: { len: LEN([1, 2, 3, 4]), tunnel: TUNNEL },
+                desc: 'Tip: a tunnel 3+ long is deep enough for other roads to cross over its middle' },
   corner:     { label: 'Corner',     params: { size: { label: 'Curve', options: [1, 2, 3], default: 1, names: ['Tight', 'Medium', 'Wide'] }, tunnel: TUNNEL } },
   chicane:    { label: 'Chicane',    params: { len: LEN([1, 2]), amp: { label: 'Wiggle', options: [2, 4, 6], default: 4, names: ['Gentle', 'Normal', 'Sharp'] }, tunnel: TUNNEL } },
   bridge:     { label: 'Bridge',     params: { len: LEN([3, 4, 5], 3), height: { label: 'Height', options: [5, 8, 12], default: 8, names: ['Low', 'Medium', 'High'] } },
@@ -102,7 +104,7 @@ function baseShape(tile) {
       // smooth climb over the first cell, level in the middle, smooth descent over the last
       const height = x => x < C ? H * (1 - Math.cos(Math.PI * x / C)) / 2 : x > L - C ? H * (1 - Math.cos(Math.PI * (L - x) / C)) / 2 : H;
       const cells = [];
-      for (let i = 0; i < n; i++) cells.push({ x: i, y: 0, over: i > 0 && i < n - 1 });
+      for (let i = 0; i < n; i++) cells.push({ x: i, y: 0, layer: i > 0 && i < n - 1 ? 1 : 0 });
       return {
         w: n, h: 1, ports: [{ x: 0, y: 0, e: 3 }, { x: n - 1, y: 0, e: 1 }], nodes: 2, cells,
         edges: [{ a: 0, b: 1, f: u => ({ x: u * L, z: H2, h: height(u * L) }), len: L }],
@@ -160,8 +162,12 @@ function baseShape(tile) {
     default: { // start, straight, chicane
       const n = paramValue(tile, 'len'), L = n * C;
       const amp = tile.type === 'chicane' ? paramValue(tile, 'amp') : 0;
+      // a long straight tunnel is deep enough in its middle cells for roads to cross over it
+      const deep = tile.type === 'straight' && paramValue(tile, 'tunnel') && n >= 3;
+      const cells = [];
+      for (let i = 0; i < n; i++) cells.push({ x: i, y: 0, layer: deep && i > 0 && i < n - 1 ? -1 : 0 });
       return {
-        w: n, h: 1, ports: [{ x: 0, y: 0, e: 3 }, { x: n - 1, y: 0, e: 1 }], nodes: 2,
+        w: n, h: 1, ports: [{ x: 0, y: 0, e: 3 }, { x: n - 1, y: 0, e: 1 }], nodes: 2, cells,
         edges: [{
           a: 0, b: 1, len: L * (amp ? 1.05 : 1), tunnel: !!paramValue(tile, 'tunnel'),
           // chicane: sideways jink and back, with zero slope at both ends
@@ -176,7 +182,8 @@ const geoCache = new WeakMap();
 
 /**
  * Geometry of a placed piece in world metres: footprint, ports, edges (with
- * sampled points) and which footprint cells are "over" (bridge decks).
+ * sampled points) and the layer of each footprint cell (1 = bridge deck,
+ * -1 = deep tunnel, 0 = ground).
  */
 export function pieceGeometry(tile) {
   const sig = JSON.stringify([tile.type, tile.rot, tile.c, tile.r, tile.len, tile.size, tile.amp, tile.height, tile.tunnel, COLS, ROWS]);
@@ -186,14 +193,14 @@ export function pieceGeometry(tile) {
   const base = baseShape(tile);
   let w = base.w, h = base.h;
   let ports = base.ports.map(p => ({ ...p }));
-  let cells = (base.cells || (() => { const a = []; for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) a.push({ x, y, over: false }); return a; })()).map(c => ({ ...c }));
+  let cells = (base.cells || (() => { const a = []; for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) a.push({ x, y, layer: 0 }); return a; })()).map(c => ({ ...c }));
   let tf = p => p;
   const rot = ((tile.rot % 4) + 4) % 4;
   for (let k = 0; k < rot; k++) {
     // rotate 90° clockwise inside a w x h box -> h x w box
     const hh = h, prev = tf, Hm = hh * CELL;
     ports = ports.map(p => ({ x: hh - 1 - p.y, y: p.x, e: (p.e + 1) % 4 }));
-    cells = cells.map(c => ({ x: hh - 1 - c.y, y: c.x, over: c.over }));
+    cells = cells.map(c => ({ x: hh - 1 - c.y, y: c.x, layer: c.layer }));
     tf = p => { const q = prev(p); return { x: Hm - q.z, z: q.x, h: q.h }; };
     [w, h] = [h, w];
   }
@@ -208,7 +215,7 @@ export function pieceGeometry(tile) {
   const geo = {
     w, h, nodes: base.nodes, junction: !!base.junction,
     ports: ports.map(p => ({ c: tile.c + p.x, r: tile.r + p.y, e: p.e })),
-    cells: cells.map(c => ({ c: tile.c + c.x, r: tile.r + c.y, over: c.over })),
+    cells: cells.map(c => ({ c: tile.c + c.x, r: tile.r + c.y, layer: c.layer, over: c.layer === 1 })),
     edges,
     island: base.island ? { ...toWorld(base.island), r: base.island.r } : null,
     length: base.edges.reduce((s, e) => s + e.len, 0),
@@ -226,10 +233,10 @@ export function fitsGrid(tile) {
 
 const key = (c, r) => c + ',' + r;
 
-/** Do two pieces clash? They may share a cell only if exactly one of them is a bridge deck there. */
+/** Do two pieces clash? They may share a cell only at different layers (bridge deck / ground / deep tunnel). */
 export function clashes(a, b) {
-  const cells = new Map(footprint(a).map(f => [key(f.c, f.r), f.over]));
-  return footprint(b).some(f => cells.has(key(f.c, f.r)) && cells.get(key(f.c, f.r)) === f.over);
+  const cells = new Map(footprint(a).map(f => [key(f.c, f.r), f.layer]));
+  return footprint(b).some(f => cells.has(key(f.c, f.r)) && cells.get(key(f.c, f.r)) === f.layer);
 }
 
 /** Can this piece carry an obstacle? (single plain road, not the start) */
@@ -267,7 +274,7 @@ export function traceLayout(tiles) {
       const m = portMap.get(`${nc},${nr},${opp(p.e)}`);
       if (!m) {
         if (!error) {
-          const blocked = tiles.some((t, k) => k !== ti && footprint(t).some(f => f.c === nc && f.r === nr && !f.over));
+          const blocked = tiles.some((t, k) => k !== ti && footprint(t).some(f => f.c === nc && f.r === nr && f.layer === 0));
           error = { c: nc, r: nr, msg: blocked ? 'This piece doesn\'t connect – rotate it or change its size' : 'The track has a gap here' };
         }
         return;
@@ -278,6 +285,14 @@ export function traceLayout(tiles) {
   }
   const order = [...inNet].map(i => tiles[i]);
   if (error) return { ok: false, order, error };
+
+  // Does the road continue as a tunnel beyond this end of the piece? (then stay deep)
+  const tunnelAt = (ti, localNode) => {
+    const p = geos[ti].ports[localNode];
+    if (!p) return false;
+    const m = portMap.get(`${p.c + DIR[p.e][0]},${p.r + DIR[p.e][1]},${opp(p.e)}`);
+    return !!m && geos[m[0]].edges.some(e => e.tunnel);
+  };
 
   // edges; the Start piece's road is cut at the start line into two halves
   const L_AHEAD = n, L_BEHIND = n + 1;
@@ -297,7 +312,7 @@ export function traceLayout(tiles) {
         return;
       }
       if (g.edges.length === 1) tileEdge.set(t, edges.length);
-      edges.push({ a, b, points: e.points, tunnel: e.tunnel, junction: e.junction });
+      edges.push({ a, b, points: e.tunnel ? sinkTunnel(e.points, tunnelAt(ti, e.a), tunnelAt(ti, e.b)) : e.points, tunnel: e.tunnel, junction: e.junction });
     });
   }
   // compact node ids
@@ -327,6 +342,18 @@ export function traceLayout(tiles) {
 }
 
 function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+
+/** Lower a tunnel road underground, sloping down/up at ends that open to the surface. */
+function sinkTunnel(points, deepA, deepB) {
+  const cum = [0];
+  for (let i = 1; i < points.length; i++) cum.push(cum[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z));
+  const L = cum[cum.length - 1], R = Math.min(CELL, L / 2);
+  const ease = d => (d >= R ? 1 : (1 - Math.cos(Math.PI * d / R)) / 2);
+  return points.map((p, i) => {
+    const fa = deepA ? 1 : ease(cum[i]), fb = deepB ? 1 : ease(L - cum[i]);
+    return { ...p, h: -TUNNEL_DEPTH * Math.min(fa, fb) };
+  });
+}
 
 // ---------------------------------------------------------------------------
 // "Turtle" builder: describe a loop as a sequence of two-ended pieces from a
@@ -411,6 +438,17 @@ export const TILE_PRESETS = {
       ['straight', { len: 1 }], ['corner', { size: 1 }, 'R'], ['straight', { len: 1 }],
       ['straight', { len: 1 }], // passes under the bridge
       ['straight', { len: 1 }], ['corner', { size: 1 }, 'L'], ['straight', { len: 3, tunnel: 1 }],
+      ['corner', { size: 1 }, 'L'], ['straight', { len: 1 }], ['corner', { size: 1 }, 'L'],
+    ]),
+  },
+  'Figure 8 tunnel': {
+    width: 14,
+    tiles: () => buildFromTurtle([3, 4], E, [
+      ['start', { len: 1 }], ['straight', { len: 1 }], ['straight', { len: 3, tunnel: 1 }],
+      ['corner', { size: 1 }, 'R'], ['straight', { len: 1 }], ['corner', { size: 1 }, 'R'],
+      ['straight', { len: 1 }], ['corner', { size: 1 }, 'R'], ['straight', { len: 1 }],
+      ['straight', { len: 1 }], // crosses over the tunnel
+      ['straight', { len: 1 }], ['corner', { size: 1 }, 'L'], ['straight', { len: 3 }],
       ['corner', { size: 1 }, 'L'], ['straight', { len: 1 }], ['corner', { size: 1 }, 'L'],
     ]),
   },

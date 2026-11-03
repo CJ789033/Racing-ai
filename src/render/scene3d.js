@@ -2,6 +2,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { CAR, RAY_ANGLES } from '../sim/car.js';
 import { hammerLat } from '../sim/obstacles.js';
 
@@ -30,17 +33,6 @@ function padTexture(type, strength) {
     x.fill();
   }
   return (padTex[k] = new THREE.CanvasTexture(cv));
-}
-
-let glowTex = null;
-function glowTexture() {
-  if (glowTex) return glowTex;
-  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
-  const x = cv.getContext('2d');
-  const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
-  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,255,255,0.8)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
-  return (glowTex = new THREE.CanvasTexture(cv));
 }
 
 let stripeTex = null;
@@ -89,12 +81,14 @@ export class Scene3D {
     this.sun = sun;
     this.scene.add(sun, sun.target);
 
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(3000, 3000),
-      new THREE.MeshLambertMaterial({ color: '#6fb24a' }));
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
+    // Ground: a big plane with a hole where the track is, filled by a patch whose
+    // alpha map makes the ground over tunnels see-through (rebuilt per track)
+    this.groundMat = new THREE.MeshLambertMaterial({ color: '#6fb24a' });
+    this.ground = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000), this.groundMat);
+    this.ground.rotation.x = -Math.PI / 2;
+    this.ground.receiveShadow = true;
+    this.scene.add(this.ground);
+    this.outlineMats = [];
 
     this.trackGroup = new THREE.Group();
     this.scene.add(this.trackGroup);
@@ -125,6 +119,7 @@ export class Scene3D {
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    for (const m of this.outlineMats || []) m.resolution.set(w, h);
     if (this.track && this.cameraMode === 'orbit' && Math.abs((this._lastAspect || 0) - this.camera.aspect) > 0.3) this.frameTrack();
     this._lastAspect = this.camera.aspect;
   }
@@ -140,7 +135,7 @@ export class Scene3D {
     const deckMat = new THREE.MeshLambertMaterial({ color: '#9aa0a8', side: THREE.DoubleSide });
     const railMat = new THREE.MeshLambertMaterial({ color: '#e5e7eb', side: THREE.DoubleSide });
     const pillarMat = new THREE.MeshLambertMaterial({ color: '#8b9097' });
-    const asphalt = [], kerbs = [], decks = [], rails = [], pillars = [], dashes = [], tunnelWalls = [], tunnelRoofs = [];
+    const asphalt = [], kerbs = [], decks = [], rails = [], pillars = [], dashes = [], tunnelWalls = [];
 
     // A strip along samples i0..i1 between lateral offsets off0..off1 (+ = driver's right… along +n)
     const strip = (i0, i1, off0, off1, y0, y1, colours) => {
@@ -191,18 +186,27 @@ export class Scene3D {
           if (h < 2.5) continue;
           for (const side of [-1, 1]) {
             const px = track.cx[i] + track.nx[i] * side * (hw - 1), pz = track.cz[i] + track.nz[i] * side * (hw - 1);
-            if (track.onRoad(0, px, pz) && track.ch[i] > 3) continue; // never stand a pillar on the road underneath
+            if ((track.onRoad(0, px, pz) || track.onRoad(2, px, pz)) && track.ch[i] > 3) continue; // never stand a pillar on a road underneath
             const p = new THREE.BoxGeometry(1.2, h - 0.9, 1.2);
             p.translate(px, (h - 0.9) / 2, pz);
             pillars.push(p);
           }
         }
       }
-      // Tunnels: see-through roof and walls
+      // Tunnels: concrete walls from the sunken road up to the ground
       if (track.tunnel[s]) {
-        tunnelWalls.push(strip(s, end, hw + 1.3, hw + 1.3, 0, 6));
-        tunnelWalls.push(strip(s, end, -hw - 1.3, -hw - 1.3, 0, 6));
-        tunnelRoofs.push(strip(s, end, -hw - 1.8, hw + 1.8, 6, 6));
+        const wall = (off) => {
+          const n2 = end - s + 1, pos = new Float32Array(n2 * 6), idx = [];
+          for (let k = 0; k < n2; k++) {
+            const i = s + k, x = track.cx[i] + track.nx[i] * off, z = track.cz[i] + track.nz[i] * off;
+            pos.set([x, Math.min(0, track.ch[i]), z, x, 0.02, z], k * 6);
+            if (k < n2 - 1) { const a = k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+          }
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+          return geo;
+        };
+        tunnelWalls.push(wall(hw + 1.3), wall(-hw - 1.3));
       }
     }
     const add = (geos, mat, opts = {}) => {
@@ -220,8 +224,8 @@ export class Scene3D {
     add(decks, deckMat, { cast: true });
     add(rails, railMat, { cast: true });
     add(pillars, pillarMat, { cast: true });
-    add(tunnelWalls, new THREE.MeshLambertMaterial({ color: '#57534e', transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }), { order: 2 });
-    add(tunnelRoofs, new THREE.MeshLambertMaterial({ color: '#4d8a35', transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }), { order: 3 });
+    add(tunnelWalls, new THREE.MeshLambertMaterial({ color: '#78716c', side: THREE.DoubleSide }));
+    this.buildGround(track);
 
     // Roundabout islands
     for (const isl of track.islands) {
@@ -263,6 +267,45 @@ export class Scene3D {
     this.addScenery(track);
     this.addObstacles(track);
     this.frameTrack();
+  }
+
+  /** Ground with a see-through patch above every tunnel. */
+  buildGround(track) {
+    if (this.groundPatch) { this.scene.remove(this.groundPatch); this.groundPatch.geometry.dispose(); this.groundPatch.material.map?.dispose(); }
+    this.ground.geometry.dispose();
+    const tunnels = [];
+    for (let e = 0; e < track.edgeCount.length; e++) if (track.tunnel[track.edgeStart[e]]) tunnels.push(e);
+    if (!tunnels.length) { this.ground.geometry = new THREE.PlaneGeometry(3000, 3000); this.groundPatch = null; return; }
+    const pad = 20, { minX, maxX, minZ, maxZ } = track.bounds;
+    const x0 = minX - pad, z0 = minZ - pad, w = maxX - minX + 2 * pad, h = maxZ - minZ + 2 * pad;
+    // outer ground with a rectangular hole (shape is in the plane's local XY; y = -z after rotation)
+    const outer = new THREE.Shape();
+    outer.moveTo(-1500, -1500); outer.lineTo(1500, -1500); outer.lineTo(1500, 1500); outer.lineTo(-1500, 1500); outer.closePath();
+    const hole = new THREE.Path();
+    hole.moveTo(x0, -z0); hole.lineTo(x0, -(z0 + h)); hole.lineTo(x0 + w, -(z0 + h)); hole.lineTo(x0 + w, -z0); hole.closePath();
+    outer.holes.push(hole);
+    this.ground.geometry = new THREE.ShapeGeometry(outer);
+    // the patch: white = solid ground, grey = see-through (alpha map uses brightness)
+    const ppm = Math.min(4, 2048 / Math.max(w, h));
+    const cv = document.createElement('canvas'); cv.width = Math.ceil(w * ppm); cv.height = Math.ceil(h * ppm);
+    const c = cv.getContext('2d');
+    c.fillStyle = '#fff'; c.fillRect(0, 0, cv.width, cv.height);
+    c.strokeStyle = 'rgb(80,80,80)'; c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = (track.width + 2.6) * ppm;
+    for (const e of tunnels) {
+      const s0 = track.edgeStart[e], n = track.edgeCount[e];
+      c.beginPath();
+      for (let k = 0; k < n; k++) { const i = s0 + k, X = (track.cx[i] - x0) * ppm, Y = (track.cz[i] - z0) * ppm; k ? c.lineTo(X, Y) : c.moveTo(X, Y); }
+      c.stroke();
+    }
+    const tex = new THREE.CanvasTexture(cv);
+    const patch = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+      new THREE.MeshLambertMaterial({ color: '#6fb24a', alphaMap: tex, transparent: true, side: THREE.DoubleSide }));
+    patch.rotation.x = -Math.PI / 2;
+    patch.position.set(x0 + w / 2, 0, z0 + h / 2);
+    patch.receiveShadow = true;
+    patch.renderOrder = 1;
+    this.groundPatch = patch;
+    this.scene.add(patch);
   }
 
   addScenery(track) {
@@ -414,17 +457,24 @@ export class Scene3D {
     for (let i = 0; i < n; i++) this.bodies.setColorAt(i, COL_ALIVE);
     this.bodies.frustumCulled = this.darks.frustumCulled = false;
     this.scene.add(this.bodies, this.darks);
-    // Glow for cars inside tunnels – drawn on top of everything so you can always spot them
-    if (this.glow) { this.scene.remove(this.glow); this.glow.geometry.dispose(); }
-    const gg = new THREE.BufferGeometry();
-    gg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
-    gg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
-    this.glow = new THREE.Points(gg, new THREE.PointsMaterial({
-      size: 30 * Math.min(window.devicePixelRatio || 1, 2), sizeAttenuation: false, // same size on screen near or far
-      map: glowTexture(), vertexColors: true, transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
-    }));
-    this.glow.frustumCulled = false; this.glow.renderOrder = 10;
-    this.scene.add(this.glow);
+    // Glowing outlines for cars inside tunnels – drawn on top of everything so they show through the ground
+    if (this.outline) { for (const o of this.outline) { this.scene.remove(o); } this.outlineGeo.dispose(); }
+    const edges = [];
+    for (const box of [chassis, cabin]) {
+      const eg = new THREE.EdgesGeometry(box), a = eg.attributes.position.array;
+      for (let i = 0; i < a.length; i++) edges.push(a[i]);
+      eg.dispose();
+    }
+    this.outlineLocal = Float32Array.from(edges);        // segments in car space (x along the car)
+    this.outlinePos = new Float32Array(n * edges.length);
+    this.outlineCol = new Float32Array(n * edges.length);
+    this.outlineGeo = new LineSegmentsGeometry();
+    this.outlineGeo.setPositions(this.outlinePos);
+    this.outlineGeo.setColors(this.outlineCol);
+    const mk = (width, opacity) => new LineMaterial({ linewidth: width, vertexColors: true, transparent: true, opacity, depthTest: false, depthWrite: false });
+    this.outlineMats = [mk(6, 0.3), mk(2.5, 1)];     // soft halo + crisp line
+    this.outline = this.outlineMats.map((m, i) => { const l = new LineSegments2(this.outlineGeo, m); l.frustumCulled = false; l.renderOrder = 10 + i; this.scene.add(l); return l; });
+    this.resize();
   }
 
   updateCars(cars, leader, dt, simTime = 0) {
@@ -433,7 +483,7 @@ export class Scene3D {
       h.swing.rotation.z = Math.asin(Math.max(-1, Math.min(1, lat / h.arm)));
     }
     const m = this._m, q = this._q, v = this._v;
-    const gp = this.glow.geometry.attributes.position, gc = this.glow.geometry.attributes.color;
+    const OL = this.outlineLocal, OP = this.outlinePos, OC = this.outlineCol, per = OL.length;
     cars.forEach((c, i) => {
       // Dead cars sink, turn grey and vanish after a moment; jumping cars fly
       const gone = !c.alive && simTime - c.diedAt > 1.5;
@@ -451,11 +501,19 @@ export class Scene3D {
       this.darks.setMatrixAt(i, m);
       const col = c === leader ? COL_LEADER : c.finished ? COL_DONE : !c.alive ? COL_DEAD : c.isElite ? COL_ELITE : COL_ALIVE;
       this.bodies.setColorAt(i, col);
-      if (c.alive && c.inTunnel) { gp.setXYZ(i, c.x, c.roadH + 1, c.z); gc.setXYZ(i, col.r, col.g, col.b); }
-      else gp.setXYZ(i, 0, -1000, 0);
+      const base = i * per;
+      if (c.alive && c.inTunnel) {
+        const cs = Math.cos(c.heading), sn = Math.sin(c.heading), y0 = c.roadH + c.y;
+        for (let k = 0; k < per; k += 3) {
+          const lx = OL[k], ly = OL[k + 1], lz = OL[k + 2];
+          OP[base + k] = c.x + lx * cs - lz * sn; OP[base + k + 1] = y0 + ly; OP[base + k + 2] = c.z + lx * sn + lz * cs;
+          OC[base + k] = Math.min(1, col.r * 0.6 + 0.4); OC[base + k + 1] = Math.min(1, col.g * 0.6 + 0.4); OC[base + k + 2] = Math.min(1, col.b * 0.6 + 0.4);
+        }
+      } else if (OP[base + 1] !== -1e4) for (let k = 0; k < per; k += 3) { OP[base + k] = 0; OP[base + k + 1] = -1e4; OP[base + k + 2] = 0; }
     });
     this._s.setScalar(1);
-    gp.needsUpdate = true; gc.needsUpdate = true;
+    this.outlineGeo.attributes.instanceStart.data.needsUpdate = true;
+    this.outlineGeo.attributes.instanceColorStart.data.needsUpdate = true;
     this.bodies.instanceMatrix.needsUpdate = true;
     this.darks.instanceMatrix.needsUpdate = true;
     this.bodies.instanceColor.needsUpdate = true;

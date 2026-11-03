@@ -152,7 +152,8 @@ export class TileEditor {
     const list = this.tilesAt(c, r);
     if (list.length < 2) return list[0] || null;
     if (this.selected && list.includes(this.selected)) return list.find(t => t !== this.selected);
-    return list.find(t => footprint(t).some(f => f.c === c && f.r === r && f.over)) || list[0];
+    const layerOf = t => footprint(t).find(f => f.c === c && f.r === r).layer;
+    return list.reduce((a, b) => (layerOf(b) > layerOf(a) ? b : a)); // top-most first
   }
 
   overlapping(tile, ignore = null) {
