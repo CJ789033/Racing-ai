@@ -440,13 +440,13 @@ export class TileEditor {
     return true;
   }
 
-  changed() {
+  changed({ panel = true } = {}) {
     this.result = traceLayout(this.tiles);
     this.preview = null;
     if (this.result.ok) {
       try { this.preview = new Track(this.result.net, this.width); } catch { this.preview = null; }
     }
-    this.renderPanel();
+    if (panel) this.renderPanel();
     this.draw();
     this.onChange(this);
   }
@@ -520,7 +520,8 @@ export class TileEditor {
         row.innerHTML = '<div class="propLabel">Position</div>';
         const inp = document.createElement('input');
         inp.type = 'range'; inp.min = 0.1; inp.max = 0.9; inp.step = 0.05; inp.value = o.pos;
-        inp.oninput = () => { o.pos = Number(inp.value); this.changed(); };
+        // update live while dragging, without rebuilding the panel (that would drop the drag)
+        inp.oninput = () => { o.pos = Number(inp.value); this.changed({ panel: false }); };
         row.appendChild(inp);
         P.appendChild(row);
       }

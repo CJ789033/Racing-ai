@@ -30,7 +30,10 @@ const GRAVITY = 9.81;
 const STOP_SPEED = 2;      // m/s – slower than this counts as "stopped"
 const STOP_TIME = 2;       // seconds stopped -> eliminated
 const NO_PROGRESS_TIME = 10; // seconds without a new best distance -> eliminated
-export const SPEED_LEVEL_STEP = 0.15; // each speed level = ±15 % top speed & power
+// Speed levels from pads: each level up = +25 % top speed & power, each level down = −18 %
+export const SPEED_UP_STEP = 0.25, SPEED_DOWN_STEP = 0.18;
+const PAD_KICK = 3;        // m/s instant push per strength point of a speed pad
+const PAD_BRAKE = 0.12;    // instant speed loss per strength point of a slow pad
 
 export class Car {
   constructor(brain, track) {
@@ -51,8 +54,14 @@ export class Car {
     this.slip = 0;             // sideways speed
     this.steer = 0; this.throttle = 0;
     this.seg = s; this.lateral = 0; this.roadH = tr.ch[s];
-    this.progress = 0;         // metres of the lap done (lapLength - distance left)
-    this.maxProgress = 0;
+    this.progress = 0;         // metres of the current lap done (lapLength - distance left)
+    this.maxProgress = 0;      // best total distance (all laps) reached so far
+    this.lap = 0;              // laps completed
+    this.lapMax = 0;           // best distance reached in the current lap
+    this.lapStart = 0;
+    this.lapTimes = [];
+    this.awaitCross = false;   // just counted a lap, waiting to roll over the line
+    this.padFlash = 0;
     this.lastProgressTime = 0;
     this.stoppedTime = 0;
     this.time = 0;
@@ -75,7 +84,10 @@ export class Car {
   }
 
   get racing() { return this.alive && !this.finished; }
-  get speedFactor() { return 1 + SPEED_LEVEL_STEP * this.speedLevel; }
+  get speedFactor() {
+    const l = this.speedLevel;
+    return l >= 0 ? 1 + SPEED_UP_STEP * l : Math.max(0.25, 1 + SPEED_DOWN_STEP * l);
+  }
 
   sense() {
     const tr = this.track, inp = this.inputs;
@@ -201,8 +213,14 @@ export class Car {
           // each pass over a pad shifts the speed level; stacks, capped at ±4
           const before = this.speedFactor;
           this.speedLevel = clamp(this.speedLevel + (hit === 'boost' ? o.strength : -o.strength), -4, 4);
-          const k = this.speedFactor / before;
+          // instant effect: a kick forward (speed pad) or a sharp brake (slow pad), plus the new level
+          let k = this.speedFactor / before;
+          const fwd = Math.max(1, this.speed);
+          if (hit === 'boost') k *= (fwd + PAD_KICK * o.strength) / fwd;
+          else k *= Math.max(0.3, 1 - PAD_BRAKE * o.strength);
+          k = Math.min(k, (CAR.maxSpeed * this.speedFactor) / fwd);
           this.vx *= k; this.vz *= k; this.speed *= k;
+          this.padFlash = 1;
         }
       }
       this.padInside[o.index] = hit === 'boost' || hit === 'slow' ? 1 : 0;
@@ -231,20 +249,34 @@ export class Car {
     if (this.finished) return nr; // victory lap: just keep driving
     const prev = this.progress;
     const prog = tr.lapLength - nr.D;
-    if (prog - prev > 25) { this.die('wrongway'); return nr; } // reversed over the start line
+    if (prog - prev > 25 && !this.awaitCross) { this.die('wrongway'); return nr; } // reversed over the start line
     this.progress = prog;
-    if (prog > this.maxProgress + 1) { this.maxProgress = prog; this.lastProgressTime = this.time; }
+    if (this.awaitCross) { if (prog < tr.lapLength * 0.5) this.awaitCross = false; return nr; }
+    if (prog > this.lapMax + 1) {
+      this.lapMax = prog;
+      this.maxProgress = this.lap * tr.lapLength + prog;
+      this.lastProgressTime = this.time;
+    }
     return nr;
   }
 
   /** Stopped, stuck, or finished? */
   checkEnd() {
     const tr = this.track;
-    if (!this.finished && this.maxProgress > tr.lapLength * 0.5 && tr.lapLength - this.progress < 1.5) {
-      this.finished = true;
-      this.lapTime = this.time;
-      this.maxProgress = tr.lapLength;
-      return;
+    if (!this.finished && !this.awaitCross && this.lapMax > tr.lapLength * 0.5 && tr.lapLength - this.progress < 1.5) {
+      // crossed the line: one more lap done
+      this.lap++;
+      this.lapTimes.push(this.time - this.lapStart);
+      this.lapStart = this.time;
+      this.lapMax = 0;
+      this.awaitCross = true;
+      this.maxProgress = this.lap * tr.lapLength;
+      this.lastProgressTime = this.time;
+      if (this.lap >= tr.laps) {
+        this.finished = true;
+        this.lapTime = this.time;  // total race time
+        return;
+      }
     }
     // cars that just sit there are removed quickly (and score lower than crashing)
     if (!this.airborne && Math.abs(this.speed) < STOP_SPEED && this.time > 1.5) this.stoppedTime += this.dt;
@@ -256,13 +288,13 @@ export class Car {
 
   computeFitness() {
     const tr = this.track;
-    const frac = Math.max(0, this.maxProgress) / tr.lapLength;
+    const frac = Math.max(0, this.maxProgress) / tr.raceLength;
     if (this.finished) {
-      // Every finisher beats every non-finisher; faster lap = higher fitness
-      const avgSpeed = tr.lapLength / this.lapTime;
+      // Every finisher beats every non-finisher; faster race = higher fitness
+      const avgSpeed = tr.raceLength / this.lapTime;
       this.fitness = 2 + 3 * avgSpeed / CAR.maxSpeed;
     } else {
-      const avgSpeed = (frac * tr.lapLength) / Math.max(1, this.time);
+      const avgSpeed = (frac * tr.raceLength) / Math.max(1, this.time);
       this.fitness = frac + 0.15 * frac * (avgSpeed / CAR.maxSpeed) - (this.crashed ? 0.002 : 0) - (this.stalled ? 0.02 : 0);
     }
     return this.fitness;

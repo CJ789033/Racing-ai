@@ -553,6 +553,16 @@ export class Scene3D {
     for (let i = 0; i < n; i++) this.bodies.setColorAt(i, COL_ALIVE);
     this.bodies.frustumCulled = this.darks.frustumCulled = false;
     this.scene.add(this.bodies, this.darks);
+    // Exhaust flames for cars with a raised speed level (speed pads)
+    if (this.flames) { this.scene.remove(this.flames); this.flames.dispose(); }
+    const flameGeo = new THREE.ConeGeometry(0.5, 2.4, 10); flameGeo.rotateZ(Math.PI / 2); flameGeo.translate(-1.2, 0, 0); // base at the origin, tip backwards
+    this._flameBack = L / 2 + 0.05;
+    this.flames = new THREE.InstancedMesh(flameGeo, new THREE.MeshBasicMaterial({ color: '#67e8f9', transparent: true, opacity: 0.85, depthWrite: false }), n);
+    this.flames.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.flames.frustumCulled = false;
+    this.scene.add(this.flames);
+    this._fs = new THREE.Vector3();
+
     // Glowing outlines for cars inside tunnels – drawn on top of everything so they show through the ground
     if (this.outline) { for (const o of this.outline) { this.scene.remove(o); } this.outlineGeo.dispose(); }
     const edges = [];
@@ -595,6 +605,15 @@ export class Scene3D {
       m.compose(v, q, this._s);
       this.bodies.setMatrixAt(i, m);
       this.darks.setMatrixAt(i, m);
+      // flame grows with the speed level and flares up for a moment on each pad
+      const lvl = c.alive ? Math.max(0, c.speedLevel) : 0;
+      if (c.padFlash > 0) c.padFlash = Math.max(0, c.padFlash - dt * 2);
+      const fl = lvl ? 0.5 + 0.28 * lvl + 0.6 * (c.padFlash || 0) + 0.12 * Math.sin(simTime * 40 + i) : 0;
+      this._fs.set(fl, fl ? 0.7 + 0.1 * lvl : 0, fl ? 0.7 + 0.1 * lvl : 0);
+      this._fp = this._fp || new THREE.Vector3();
+      this._fp.set(v.x - Math.cos(c.heading) * this._flameBack, v.y + 0.55, v.z - Math.sin(c.heading) * this._flameBack);
+      m.compose(this._fp, q, this._fs);
+      this.flames.setMatrixAt(i, m);
       const col = c === leader ? COL_LEADER : c.finished ? COL_DONE : !c.alive ? COL_DEAD : c.isElite ? COL_ELITE : COL_ALIVE;
       this.bodies.setColorAt(i, col);
       const base = i * per;
@@ -611,6 +630,7 @@ export class Scene3D {
     this.outlineGeo.attributes.instanceStart.data.needsUpdate = true;
     this.outlineGeo.attributes.instanceColorStart.data.needsUpdate = true;
     this.bodies.instanceMatrix.needsUpdate = true;
+    this.flames.instanceMatrix.needsUpdate = true;
     this.darks.instanceMatrix.needsUpdate = true;
     this.bodies.instanceColor.needsUpdate = true;
 

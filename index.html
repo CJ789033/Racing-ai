@@ -18,7 +18,8 @@
         <div class="row"><span>Alive</span><b id="sAlive">-</b></div>
         <div class="row"><span>Time</span><b id="sTime">-</b></div>
         <div class="row"><span>Leader</span><b id="sSpeed">-</b></div>
-        <div class="row best"><span>Best lap</span><b id="sBest">–</b></div>
+        <div class="row"><span>Lap</span><b id="sLap">–</b></div>
+        <div class="row best"><span id="sBestLbl">Best lap</span><b id="sBest">–</b></div>
         <div class="row"><span>Last gen</span><b id="sLast">–</b></div>
         <div class="local small" title="All training runs on this device. No internet connection is used.">🔒 Learning on this device · offline</div>
       </div>
@@ -75,6 +76,7 @@
           <button id="eReverse">🔄<small>Reverse</small></button>
           <button id="eStart">🏁<small>Move start</small></button>
           <button id="eClear">✖<small>Clear</small></button>
+          <label class="small"><span>Laps</span><select id="eLaps"></select></label>
         </div>
         <div class="group tile-only">
           <label class="small"><span>Grid</span>

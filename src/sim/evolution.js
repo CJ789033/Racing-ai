@@ -49,7 +49,7 @@ export class Evolution {
   /** Time limit for the current generation. */
   get timeLimit() {
     if (this.bestLap) return this.bestLap * 1.25 + 3;
-    return Math.min(180, 20 + this.track.length / 10);
+    return Math.min(180 * this.track.laps, 20 + this.track.raceLength / 10);
   }
 
   /** The car currently furthest along (alive preferred). */
@@ -57,7 +57,7 @@ export class Evolution {
     let best = null, bp = -Infinity;
     for (const c of this.cars) {
       // follow the best car still racing; once all are done, the fastest finisher
-      const p = c.racing ? 1e6 + c.progress : c.finished ? (c.alive ? 5e5 : 4e5) - c.lapTime : c.progress;
+      const p = c.racing ? 1e6 + c.maxProgress + c.progress * 1e-3 : c.finished ? (c.alive ? 5e5 : 4e5) - c.lapTime : c.maxProgress;
       if (p > bp) { bp = p; best = c; }
     }
     return best;
@@ -85,7 +85,7 @@ export class Evolution {
       generation: this.generation,
       bestFitness: best.fitness,
       avgFitness,
-      bestProgress: Math.min(1, best.maxProgress / this.track.lapLength),
+      bestProgress: Math.min(1, best.maxProgress / this.track.raceLength),
       bestLap: genBestLap,
       finishers: finishers.length,
     };

@@ -30,7 +30,8 @@ const TUNNEL = { label: 'Tunnel', options: [0, 1], default: 0, names: ['Off', 'O
 export const TUNNEL_DEPTH = 7; // metres below ground
 
 export const PIECES = {
-  start:      { label: 'Start',      params: { len: LEN([1, 2, 3]) } },
+  start:      { label: 'Start',      params: { len: LEN([1, 2, 3]), laps: { label: 'Laps to race', options: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], default: 1 } },
+                desc: 'Start / finish line. Choose how many laps the cars must complete.' },
   straight:   { label: 'Straight',   params: { len: LEN([1, 2, 3, 4]), tunnel: TUNNEL },
                 desc: 'Tip: a tunnel 3+ long is deep enough for other roads to cross over its middle' },
   corner:     { label: 'Corner',     params: { size: { label: 'Curve', options: [1, 2, 3], default: 1, names: ['Tight', 'Medium', 'Wide'] }, tunnel: TUNNEL } },
@@ -337,7 +338,7 @@ export function traceLayout(tiles) {
   const islands = order.map(t => pieceGeometry(t).island).filter(Boolean);
   return {
     ok: true, order, unused: tiles.length - order.length, tileEdge,
-    net: { edges, nodeCount: ids.size, aheadEdge, behindEdge, obstacles, islands },
+    net: { edges, nodeCount: ids.size, aheadEdge, behindEdge, obstacles, islands, laps: paramValue(starts[0], 'laps') },
   };
 }
 

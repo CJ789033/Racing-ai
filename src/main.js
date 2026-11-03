@@ -93,13 +93,13 @@ function buildTrack(def) {
     if (!res.ok) throw new Error(res.error.msg);
     return new Track(res.net, def.width);
   }
-  return Track.fromLoop(def.points, def.width);
+  return Track.fromLoop(def.points, def.width, { laps: def.laps || 1 });
 }
 
 function currentDef() {
   return state.editorKind === 'tiles'
     ? { kind: 'tiles', width: tileEditor.width, cols: COLS, rows: ROWS, tiles: tileEditor.tiles.map(t => JSON.parse(JSON.stringify(t))) }
-    : { kind: 'spline', width: editor.width, points: editor.points.map(({ x, z }) => ({ x, z })) };
+    : { kind: 'spline', width: editor.width, laps: Number($('eLaps').value) || 1, points: editor.points.map(({ x, z }) => ({ x, z })) };
 }
 
 function loadDefIntoEditor(def) {
@@ -110,7 +110,7 @@ function loadDefIntoEditor(def) {
     syncGridSelect();
     tileEditor.setTiles(def.tiles, def.width);
   }
-  else editor.setPoints(def.points, def.width);
+  else { $('eLaps').value = def.laps || 1; editor.setPoints(def.points, def.width); }
 }
 
 function setEditorKind(kind) {
@@ -214,7 +214,7 @@ function updateEditorInfo(ed) {
   let info = '', issue = null;
   if (ed === tileEditor) {
     const res = ed.result;
-    if (ed.preview) info = `✅ Ready · ${res.order.some(t => PIECES[t.type].junction) ? 'shortest lap' : 'lap'} ${ed.preview.lapLength.toFixed(0)} m · ${res.order.length} pieces` + (res.unused ? ` · ${res.unused} unused` : '');
+    if (ed.preview) info = `✅ Ready · ${res.order.some(t => PIECES[t.type].junction) ? 'shortest lap' : 'lap'} ${ed.preview.lapLength.toFixed(0)} m${ed.preview.laps > 1 ? ` × ${ed.preview.laps} laps` : ''} · ${res.order.length} pieces` + (res.unused ? ` · ${res.unused} unused` : '');
     else if (ed.tiles.length) issue = res.error ? res.error.msg : null;
     else info = 'Start by dragging the Start piece onto the grid';
   } else {
@@ -262,6 +262,9 @@ $('tDel').onclick = () => setTileMode(tileEditor.mode === 'delete' ? 'place' : '
 $('tSel').onclick = () => setTileMode(tileEditor.mode === 'select' ? 'place' : 'select');
 tileEditor.onExitSelect = () => setTileMode('place');
 $('tClear').onclick = () => tileEditor.setTiles([]);
+
+// Laps for freehand tracks (piece tracks set them on the Start piece)
+for (let i = 1; i <= 10; i++) { const o = document.createElement('option'); o.value = i; o.textContent = i; $('eLaps').appendChild(o); }
 
 // Grid size
 const gridSel = $('tGrid');
@@ -424,8 +427,11 @@ function frame(now) {
     $('sAlive').textContent = `${evo.aliveCount} / ${evo.cars.length}`;
     $('sTime').textContent = `${evo.time.toFixed(1)} / ${evo.timeLimit.toFixed(0)} s`;
     const lvl = leader && leader.speedLevel ? ` · ${leader.speedLevel > 0 ? '⏩+' : '🐢'}${leader.speedLevel}` : '';
-    $('sSpeed').textContent = leader ? `${(leader.speed * 3.6).toFixed(0)} km/h · ${Math.min(100, Math.max(0, (leader.finished ? 1 : leader.progress / state.track.lapLength) * 100)).toFixed(0)}%${lvl}` : '-';
+    $('sSpeed').textContent = leader ? `${(leader.speed * 3.6).toFixed(0)} km/h · ${Math.min(100, Math.max(0, (leader.finished ? 1 : (leader.lap * state.track.lapLength + leader.progress) / state.track.raceLength) * 100)).toFixed(0)}%${lvl}` : '-';
     $('sBest').textContent = evo.bestLap ? evo.bestLap.toFixed(2) + ' s' : '–';
+    const laps = state.track.laps;
+    $('sBestLbl').textContent = laps > 1 ? `Best (${laps} laps)` : 'Best lap';
+    $('sLap').textContent = leader ? `${Math.min(laps, leader.lap + (leader.finished ? 0 : 1))} / ${laps}${leader.finished ? ' 🏁' : ''}` : '–';
     const ls = evo.lastStats;
     $('sLast').textContent = ls ? (ls.bestLap ? `${ls.bestLap.toFixed(2)} s (${ls.finishers}🏁)` : `${(ls.bestProgress * 100).toFixed(0)}%`) : '–';
     if (!$('panels').classList.contains('hidden')) {

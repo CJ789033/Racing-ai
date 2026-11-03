@@ -52,7 +52,7 @@ export class Track {
   }
 
   /** A simple closed loop (freehand editor): control points -> spline -> network. */
-  static fromLoop(points, width = 12, { spline = true } = {}) {
+  static fromLoop(points, width = 12, { spline = true, laps = 1 } = {}) {
     if (points.length < 3) throw new Error('A track needs at least 3 points');
     const P = points, n = P.length, dense = [];
     if (spline) {
@@ -64,7 +64,7 @@ export class Track {
     } else dense.push(...P.map(p => ({ x: p.x, z: p.z, h: p.h || 0 })));
     const mid = Math.floor(dense.length / 2);
     const t = new Track({
-      nodeCount: 3, aheadEdge: 0, behindEdge: 1, obstacles: [],
+      nodeCount: 3, aheadEdge: 0, behindEdge: 1, obstacles: [], laps,
       edges: [
         { a: 0, b: 1, points: dense.slice(0, mid + 1) },
         { a: 1, b: 2, points: [...dense.slice(mid), dense[0]] },
@@ -163,6 +163,8 @@ export class Track {
     this.lapLength = this.D[this.startIndex];
     if (!isFinite(this.lapLength)) throw new Error('Track never returns to the start');
     this.length = this.lapLength;
+    this.laps = Math.max(1, Math.min(10, net.laps || 1));
+    this.raceLength = this.lapLength * this.laps;
 
     // ---- "next" sample along the best route, and the driving direction there
     this.next = new Int32Array(N);
