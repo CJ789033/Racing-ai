@@ -22,6 +22,7 @@ const state = {
   paused: false,
   speedIdx: 0,
   shadows: true,
+  seeThrough: true,  // see-through ground over tunnels
 };
 
 const scene = new Scene3D($('view3d'));
@@ -135,6 +136,7 @@ function save() {
     track: state.def,
     settings: state.settings,
     shadows: state.shadows,
+    seeThrough: state.seeThrough,
     evo: evo && {
       generation: evo.generation,
       bestLap: evo.bestLap,
@@ -323,6 +325,7 @@ function syncSettingsUI() {
   $('iStr').value = s.mutationStrength; $('vStr').textContent = s.mutationStrength.toFixed(2);
   $('iHidden').value = state.settings.hidden.join(',');
   $('iShadows').checked = state.shadows;
+  $('iSeeThrough').checked = state.seeThrough;
 }
 $('bSettings').onclick = () => { syncSettingsUI(); $('settings').classList.remove('hidden'); };
 $('iPop').oninput = e => { state.settings.populationSize = Number(e.target.value); syncSettingsUI(); };
@@ -345,6 +348,11 @@ $('iShadows').onchange = e => {
   state.shadows = e.target.checked;
   scene.renderer.shadowMap.enabled = state.shadows;
   scene.scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });
+  save();
+};
+$('iSeeThrough').onchange = e => {
+  state.seeThrough = e.target.checked;
+  scene.setTunnelSeeThrough(state.seeThrough);
   save();
 };
 $('sReset').onclick = () => {
@@ -435,6 +443,8 @@ syncGridSelect();
 if (saved && saved.track) {
   state.settings = { ...DEFAULT_SETTINGS, ...saved.settings };
   state.shadows = saved.shadows ?? true;
+  state.seeThrough = saved.seeThrough ?? true;
+  scene.tunnelSeeThrough = state.seeThrough;
   const def = saved.track.kind ? saved.track : { kind: 'spline', ...saved.track }; // older saves
   try {
     loadDefIntoEditor(def);

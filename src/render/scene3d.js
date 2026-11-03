@@ -135,7 +135,7 @@ export class Scene3D {
     const deckMat = new THREE.MeshLambertMaterial({ color: '#9aa0a8', side: THREE.DoubleSide });
     const railMat = new THREE.MeshLambertMaterial({ color: '#e5e7eb', side: THREE.DoubleSide });
     const pillarMat = new THREE.MeshLambertMaterial({ color: '#8b9097' });
-    const asphalt = [], kerbs = [], decks = [], rails = [], pillars = [], dashes = [], tunnelWalls = [];
+    const asphalt = [], kerbs = [], decks = [], rails = [], pillars = [], dashes = [];
 
     // A strip along samples i0..i1 between lateral offsets off0..off1 (+ = driver's right… along +n)
     const strip = (i0, i1, off0, off1, y0, y1, colours) => {
@@ -193,21 +193,6 @@ export class Scene3D {
           }
         }
       }
-      // Tunnels: concrete walls from the sunken road up to the ground
-      if (track.tunnel[s]) {
-        const wall = (off) => {
-          const n2 = end - s + 1, pos = new Float32Array(n2 * 6), idx = [];
-          for (let k = 0; k < n2; k++) {
-            const i = s + k, x = track.cx[i] + track.nx[i] * off, z = track.cz[i] + track.nz[i] * off;
-            pos.set([x, Math.min(0, track.ch[i]), z, x, 0.02, z], k * 6);
-            if (k < n2 - 1) { const a = k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
-          }
-          const geo = new THREE.BufferGeometry();
-          geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
-          return geo;
-        };
-        tunnelWalls.push(wall(hw + 1.3), wall(-hw - 1.3));
-      }
     }
     const add = (geos, mat, opts = {}) => {
       if (!geos.length) return null;
@@ -224,7 +209,7 @@ export class Scene3D {
     add(decks, deckMat, { cast: true });
     add(rails, railMat, { cast: true });
     add(pillars, pillarMat, { cast: true });
-    add(tunnelWalls, new THREE.MeshLambertMaterial({ color: '#78716c', side: THREE.DoubleSide }));
+    this.buildTunnels(track);
     this.buildGround(track);
 
     // Roundabout islands
@@ -269,9 +254,109 @@ export class Scene3D {
     this.frameTrack();
   }
 
-  /** Ground with a see-through patch above every tunnel. */
+  /**
+   * Tunnels: where the sunken road is deep enough it runs through an arched
+   * concrete tube with ceiling lights; where it slopes down/up it's an open
+   * cutting with retaining walls, and a portal marks each entrance.
+   */
+  buildTunnels(track) {
+    const hw = track.halfWidth, W = hw + 1.3, WALL = 3.6, ARCH = 2.7;
+    const covered = i => track.tunnel[i] && track.ch[i] <= -(WALL + ARCH + 0.3);
+    this.tunnelCovered = covered;
+    // cross-section of the tube: (lateral offset, height above the road)
+    const profile = [[W, 0], [W, WALL]];
+    for (let k = 1; k < 14; k++) { const a = Math.PI * k / 14; profile.push([W * Math.cos(a), WALL + ARCH * Math.sin(a)]); }
+    profile.push([-W, WALL], [-W, 0]);
+    const tubes = [], walls = [], lights = [], portals = [];
+    const ring = i => profile.map(([o, y]) => [track.cx[i] + track.nx[i] * o, track.ch[i] + y, track.cz[i] + track.nz[i] * o]);
+    const sweep = (i0, i1) => {
+      const P = profile.length, n = i1 - i0 + 1, pos = new Float32Array(n * P * 3), idx = [];
+      for (let k = 0; k < n; k++) {
+        ring(i0 + k).forEach((v, j) => pos.set(v, (k * P + j) * 3));
+        if (k < n - 1) for (let j = 0; j < P - 1; j++) { const a = k * P + j, b = a + P; idx.push(a, b, a + 1, a + 1, b, b + 1); }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+      return g;
+    };
+    const wall = (i0, i1, off) => {
+      const n = i1 - i0 + 1, pos = new Float32Array(n * 6), idx = [];
+      for (let k = 0; k < n; k++) {
+        const i = i0 + k, x = track.cx[i] + track.nx[i] * off, z = track.cz[i] + track.nz[i] * off;
+        pos.set([x, Math.min(0, track.ch[i]), z, x, 0.02, z], k * 6);
+        if (k < n - 1) { const a = k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+      return g;
+    };
+    const portal = i => {
+      const top = -track.ch[i] + 0.4; // up to just above the ground
+      const shape = new THREE.Shape();
+      shape.moveTo(-W - 2.5, 0); shape.lineTo(W + 2.5, 0); shape.lineTo(W + 2.5, top); shape.lineTo(-W - 2.5, top); shape.closePath();
+      const hole = new THREE.Path();
+      profile.forEach(([o, y], k) => (k ? hole.lineTo(o, y + 0.01) : hole.moveTo(o, y + 0.01)));
+      hole.closePath();
+      shape.holes.push(hole);
+      const g = new THREE.ExtrudeGeometry(shape, { depth: 1.4, bevelEnabled: false });
+      g.translate(0, 0, -0.7);
+      const m = new THREE.Matrix4().makeRotationY(-Math.atan2(track.nz[i], track.nx[i]));
+      m.setPosition(track.cx[i], track.ch[i], track.cz[i]);
+      g.applyMatrix4(m);
+      return g;
+    };
+    for (let e = 0; e < track.edgeCount.length; e++) {
+      const s0 = track.edgeStart[e], end = s0 + track.edgeCount[e] - 1;
+      if (!track.tunnel[s0]) continue;
+      // split the edge into runs of covered / open points
+      let k = s0;
+      while (k <= end) {
+        const cov = covered(k);
+        let j = k;
+        while (j < end && covered(j + 1) === cov) j++;
+        const a = Math.max(s0, k - 1), b = Math.min(end, j + 1); // overlap a sample so pieces meet
+        if (cov) {
+          tubes.push(sweep(a, b));
+          for (let i = k; i <= j; i += 5) {
+            const L = new THREE.BoxGeometry(0.5, 0.12, 2.6);
+            L.applyMatrix4(new THREE.Matrix4().makeRotationY(-Math.atan2(track.tz[i], track.tx[i]) + Math.PI / 2));
+            L.translate(track.cx[i], track.ch[i] + WALL + ARCH - 0.25, track.cz[i]);
+            lights.push(L);
+          }
+          // a portal wherever the covered part meets an open cutting (joined tunnel pieces stay covered)
+          if (k > s0) portals.push(portal(k));
+          if (j < end) portals.push(portal(j));
+        } else {
+          walls.push(wall(a, b, W), wall(a, b, -W));
+        }
+        k = j + 1;
+      }
+    }
+    this.tubeMat = new THREE.MeshLambertMaterial({ color: '#8a847d', side: THREE.DoubleSide });
+    const add = (geos, mat) => { if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos), mat); this.trackGroup.add(m); return m; } };
+    add(tubes, this.tubeMat);
+    add(walls, new THREE.MeshLambertMaterial({ color: '#78716c', side: THREE.DoubleSide }));
+    add(portals, new THREE.MeshLambertMaterial({ color: '#b8b2aa' }));
+    add(lights, new THREE.MeshBasicMaterial({ color: '#fff3c4' }));
+    this.applyTunnelLook();
+  }
+
+  /** See-through on: you can watch cars through the ground; off: solid grass on top. */
+  setTunnelSeeThrough(on) {
+    this.tunnelSeeThrough = on;
+    if (this.track) { this.buildGround(this.track); this.applyTunnelLook(); }
+  }
+
+  applyTunnelLook() {
+    if (!this.tubeMat) return;
+    const see = this.tunnelSeeThrough !== false;
+    this.tubeMat.transparent = see; this.tubeMat.opacity = see ? 0.35 : 1; this.tubeMat.depthWrite = !see;
+    this.tubeMat.needsUpdate = true;
+  }
+
+  /** Ground: open cuttings at tunnel entrances, see-through (or solid) ground over covered tunnels. */
   buildGround(track) {
-    if (this.groundPatch) { this.scene.remove(this.groundPatch); this.groundPatch.geometry.dispose(); this.groundPatch.material.map?.dispose(); }
+    if (this.groundPatch) { this.scene.remove(this.groundPatch); this.groundPatch.geometry.dispose(); this.groundPatch.material.alphaMap?.dispose(); }
     this.ground.geometry.dispose();
     const tunnels = [];
     for (let e = 0; e < track.edgeCount.length; e++) if (track.tunnel[track.edgeStart[e]]) tunnels.push(e);
@@ -285,21 +370,32 @@ export class Scene3D {
     hole.moveTo(x0, -z0); hole.lineTo(x0, -(z0 + h)); hole.lineTo(x0 + w, -(z0 + h)); hole.lineTo(x0 + w, -z0); hole.closePath();
     outer.holes.push(hole);
     this.ground.geometry = new THREE.ShapeGeometry(outer);
-    // the patch: white = solid ground, grey = see-through (alpha map uses brightness)
+    // alpha mask: white = solid ground, grey = see-through, black = open cutting
     const ppm = Math.min(4, 2048 / Math.max(w, h));
     const cv = document.createElement('canvas'); cv.width = Math.ceil(w * ppm); cv.height = Math.ceil(h * ppm);
     const c = cv.getContext('2d');
     c.fillStyle = '#fff'; c.fillRect(0, 0, cv.width, cv.height);
-    c.strokeStyle = 'rgb(80,80,80)'; c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = (track.width + 2.6) * ppm;
-    for (const e of tunnels) {
-      const s0 = track.edgeStart[e], n = track.edgeCount[e];
-      c.beginPath();
-      for (let k = 0; k < n; k++) { const i = s0 + k, X = (track.cx[i] - x0) * ppm, Y = (track.cz[i] - z0) * ppm; k ? c.lineTo(X, Y) : c.moveTo(X, Y); }
-      c.stroke();
+    c.lineCap = 'butt'; c.lineJoin = 'round'; c.lineWidth = (track.width + 2.6) * ppm;
+    const covered = this.tunnelCovered || (() => false);
+    const see = this.tunnelSeeThrough !== false;
+    for (const pass of [true, false]) { // covered parts first, then cut the openings
+      c.strokeStyle = pass ? (see ? 'rgb(80,80,80)' : '#fff') : '#000';
+      for (const e of tunnels) {
+        const s0 = track.edgeStart[e], n = track.edgeCount[e];
+        let drawing = false;
+        for (let k = 0; k < n; k++) {
+          const i = s0 + k, on = covered(i) === pass;
+          const X = (track.cx[i] - x0) * ppm, Y = (track.cz[i] - z0) * ppm;
+          if (on && !drawing) { c.beginPath(); c.moveTo(X, Y); drawing = true; }
+          else if (on) c.lineTo(X, Y);
+          else if (drawing) { c.lineTo(X, Y); c.stroke(); drawing = false; }
+        }
+        if (drawing) c.stroke();
+      }
     }
     const tex = new THREE.CanvasTexture(cv);
     const patch = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
-      new THREE.MeshLambertMaterial({ color: '#6fb24a', alphaMap: tex, transparent: true, side: THREE.DoubleSide }));
+      new THREE.MeshLambertMaterial({ color: '#6fb24a', alphaMap: tex, transparent: true, alphaTest: 0.02, side: THREE.DoubleSide }));
     patch.rotation.x = -Math.PI / 2;
     patch.position.set(x0 + w / 2, 0, z0 + h / 2);
     patch.receiveShadow = true;
