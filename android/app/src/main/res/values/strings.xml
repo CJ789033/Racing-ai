@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Racing AI</string>
+    <string name="title_activity_main">Racing AI</string>
+    <string name="package_name">com.racingai.evolve</string>
+    <string name="custom_url_scheme">com.racingai.evolve</string>
+</resources>

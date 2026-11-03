@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#14171c" />
+  <title>Racing AI</title>
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 3D race view -->
+    <div id="view3d"></div>
+
+    <div id="raceHud" class="hud hidden">
+      <div class="stats card">
+        <div class="row big"><span>Gen</span><b id="sGen">1</b></div>
+        <div class="row"><span>Alive</span><b id="sAlive">-</b></div>
+        <div class="row"><span>Time</span><b id="sTime">-</b></div>
+        <div class="row"><span>Leader</span><b id="sSpeed">-</b></div>
+        <div class="row best"><span>Best lap</span><b id="sBest">–</b></div>
+        <div class="row"><span>Last gen</span><b id="sLast">–</b></div>
+      </div>
+
+      <div class="toolbar">
+        <button id="bEdit" title="Edit track">✏️<small>Track</small></button>
+        <button id="bPause" title="Pause">⏸<small>Pause</small></button>
+        <button id="bSpeed" title="Simulation speed">⏩<small id="speedLbl">1×</small></button>
+        <button id="bCam" title="Camera">🎥<small id="camLbl">Orbit</small></button>
+        <button id="bSensors" title="Show sensors">📡<small>Sensors</small></button>
+        <button id="bPanels" title="Brain &amp; stats">🧠<small>Brain</small></button>
+        <button id="bSettings" title="Settings">⚙️<small>AI</small></button>
+      </div>
+
+      <div id="panels" class="panels">
+        <div class="card">
+          <div class="cardTitle">Leader's brain <span class="muted">(live)</span></div>
+          <canvas id="netCanvas"></canvas>
+        </div>
+        <div class="card">
+          <div class="cardTitle"><span style="color:#3fa7ff">■</span> best progress &nbsp;<span style="color:#ffc02e">■</span> best lap</div>
+          <canvas id="chartCanvas"></canvas>
+        </div>
+      </div>
+      <div class="legend">
+        <span><i style="background:#ffc02e"></i>leader</span>
+        <span><i style="background:#b26bff"></i>elite</span>
+        <span><i style="background:#3fa7ff"></i>racing</span>
+        <span><i style="background:#38e07b"></i>finished</span>
+        <span><i style="background:#5a5f66"></i>out</span>
+      </div>
+    </div>
+
+    <!-- Track editor -->
+    <div id="editor" class="hidden">
+      <canvas id="editorCanvas"></canvas>
+      <div class="editorTop card">
+        <div class="cardTitle">Build your track</div>
+        <div class="muted small">Tap to add points · drag to move · yellow = start. Cars drive in the arrow's direction.</div>
+        <div id="editorIssue" class="warn hidden"></div>
+        <div id="editorInfo" class="small"></div>
+      </div>
+      <div class="editorBar">
+        <div class="group">
+          <button id="eAdd" class="active">➕<small>Add/Move</small></button>
+          <button id="eDel">🗑️<small>Delete</small></button>
+          <button id="eReverse">🔄<small>Reverse</small></button>
+          <button id="eStart">🏁<small>Move start</small></button>
+          <button id="eClear">✖<small>Clear</small></button>
+        </div>
+        <div class="group">
+          <label class="small">Width <b id="eWidthLbl">12</b> m
+            <input id="eWidth" type="range" min="8" max="22" step="1" value="12" />
+          </label>
+          <select id="ePreset">
+            <option value="">Presets…</option>
+          </select>
+        </div>
+        <button id="eGo" class="primary">🏎️ Start evolution</button>
+      </div>
+    </div>
+
+    <!-- Settings dialog -->
+    <div id="settings" class="modal hidden">
+      <div class="card dialog">
+        <div class="cardTitle">AI settings</div>
+        <label>Population <b id="vPop"></b><input id="iPop" type="range" min="10" max="150" step="5" /></label>
+        <label>Mutation rate <b id="vRate"></b><input id="iRate" type="range" min="0.01" max="0.4" step="0.01" /></label>
+        <label>Mutation strength <b id="vStr"></b><input id="iStr" type="range" min="0.05" max="1.5" step="0.05" /></label>
+        <label>Hidden layers <input id="iHidden" type="text" placeholder="12,8" /></label>
+        <label class="check"><input id="iShadows" type="checkbox" /> Shadows (slower on phones)</label>
+        <p class="muted small">Population size and hidden layers take effect when the AI is reset. Mutation applies immediately.</p>
+        <div class="dialogButtons">
+          <button id="sReset" class="danger">Reset AI (forget everything)</button>
+          <button id="sClose" class="primary">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

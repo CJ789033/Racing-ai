@@ -1,0 +1,8 @@
+{
+  "appId": "com.racingai.evolve",
+  "appName": "Racing AI",
+  "webDir": "dist",
+  "android": {
+    "backgroundColor": "#14171c"
+  }
+}
