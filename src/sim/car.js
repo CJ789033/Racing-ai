@@ -23,6 +23,9 @@ export const INPUT_SIZE = RAY_ANGLES.length + 2 + LOOKAHEAD.length;
 export const OUTPUT_SIZE = 2; // steer, throttle/brake
 
 const STALL_TIME = 3;   // seconds without progress -> eliminated
+const GRAVITY = 9.81;
+const RAMP_LIFT = 0.25;   // vertical launch speed per m/s of forward speed (~14° ramp)
+const RAMP_MAX_VY = 9;
 
 export class Car {
   constructor(brain, track) {
@@ -52,6 +55,9 @@ export class Car {
     this.crashed = false;
     this.onOil = false;
     this.killedBy = null;
+    this.y = 0; this.vy = 0;  // height above the road (jumps)
+    this.airborne = false;
+    this.jumps = 0;
     this.fitness = 0;
   }
 
@@ -93,8 +99,26 @@ export class Car {
   /** Advance physics by dt seconds. */
   step(dt) {
     if (!this.alive) return;
-    this.think();
     const c = CAR;
+    const px = this.x, pz = this.z;
+    if (this.airborne) {
+      // Flying: no grip, so no steering, throttle or brakes – just a ballistic arc
+      this.vy -= GRAVITY * dt;
+      this.y += this.vy * dt;
+      this.x += Math.cos(this.heading) * this.speed * dt;
+      this.z += Math.sin(this.heading) * this.speed * dt;
+      this.distance += this.speed * dt;
+      this.time += dt;
+      this.updateTrackPosition();
+      if (this.y > 0) { this.checkEnd(); return; }
+      this.y = 0; this.vy = 0; this.airborne = false;
+      this.speed *= 0.93; // landing costs a little speed
+      const landed = this.track.nearest(this.x, this.z, this.seg);
+      if (landed.dist > this.track.halfWidth) { this.alive = false; this.crashed = true; this.killedBy = 'landing'; return; }
+      this.checkEnd();
+      return;
+    }
+    this.think();
     // Longitudinal
     let accel;
     if (this.throttle >= 0) accel = this.throttle * c.engine * (1 - 0.6 * this.speed / c.maxSpeed);
@@ -114,24 +138,12 @@ export class Car {
     }
     this.heading += yawRate * dt;
     const vx = Math.cos(this.heading) * this.speed, vz = Math.sin(this.heading) * this.speed;
-    const px = this.x, pz = this.z;
     this.x += vx * dt; this.z += vz * dt;
     this.distance += this.speed * dt;
     this.time += dt;
 
-    // Track position & progress
     const tr = this.track;
-    const prevSeg = this.seg;
-    const nr = tr.nearest(this.x, this.z, this.seg);
-    this.seg = nr.index; this.segT = nr.t; this.lateral = nr.lateral;
-    if (prevSeg > tr.N * 0.75 && this.seg < tr.N * 0.25) this.laps++;
-    else if (prevSeg < tr.N * 0.25 && this.seg > tr.N * 0.75) this.laps--;
-    this.progress = this.laps * tr.N + this.seg + this.segT;
-
-    if (this.progress > this.maxProgress + 0.5) {
-      this.maxProgress = this.progress;
-      this.lastProgressTime = this.time;
-    }
+    const nr = this.updateTrackPosition();
 
     // Obstacles
     this.onOil = false;
@@ -143,12 +155,41 @@ export class Car {
       if (hit === 'dead') dead = o.type;
       else if (hit === 'solid') { this.x = px; this.z = pz; this.speed = 0; }
       else if (hit === 'oil') this.onOil = true;
+      else if (hit === 'ramp' && !dead) {
+        // Launch! Faster cars fly higher and further
+        this.airborne = true;
+        this.vy = Math.min(RAMP_MAX_VY, this.speed * RAMP_LIFT);
+        this.y = 0.01;
+        this.jumps++;
+      }
     }
 
     // Termination conditions
     if (dead) { this.alive = false; this.crashed = true; this.killedBy = dead; }
     else if (nr.dist > tr.halfWidth) { this.alive = false; this.crashed = true; }
-    else if (this.time - this.lastProgressTime > STALL_TIME) this.alive = false;
+    else this.checkEnd();
+  }
+
+  /** Find where the car is along the track and update lap progress. */
+  updateTrackPosition() {
+    const tr = this.track;
+    const prevSeg = this.seg;
+    const nr = tr.nearest(this.x, this.z, this.seg);
+    this.seg = nr.index; this.segT = nr.t; this.lateral = nr.lateral;
+    if (prevSeg > tr.N * 0.75 && this.seg < tr.N * 0.25) this.laps++;
+    else if (prevSeg < tr.N * 0.25 && this.seg > tr.N * 0.75) this.laps--;
+    this.progress = this.laps * tr.N + this.seg + this.segT;
+    if (this.progress > this.maxProgress + 0.5) {
+      this.maxProgress = this.progress;
+      this.lastProgressTime = this.time;
+    }
+    return nr;
+  }
+
+  /** Stalled, going backwards, or finished? */
+  checkEnd() {
+    const tr = this.track;
+    if (this.time - this.lastProgressTime > STALL_TIME) this.alive = false;
     else if (this.progress < -3) this.alive = false;
     else if (this.progress >= tr.N) {
       this.alive = false;

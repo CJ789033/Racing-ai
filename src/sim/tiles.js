@@ -23,8 +23,9 @@ export const OBSTACLE_TYPES = {
   spikes: { label: 'Spikes', icon: '🔺', desc: 'Strip of spikes covering part of the road – fatal' },
   crates: { label: 'Crates', icon: '📦', desc: 'Solid wall of crates – you stop dead if you hit them' },
   oil:    { label: 'Oil',    icon: '🛢️', desc: 'Slippery patch – almost no grip' },
+  ramp:   { label: 'Ramp',   icon: '⤴️', desc: 'Launches cars into the air – faster means further. No steering while flying, and land on the road!' },
 };
-export const OBSTACLE_ORDER = ['hammer', 'spikes', 'crates', 'oil'];
+export const OBSTACLE_ORDER = ['hammer', 'spikes', 'crates', 'oil', 'ramp'];
 export const LANES = ['left', 'center', 'right'];
 
 export function paramValue(tile, name) {
@@ -248,6 +249,17 @@ export const TILE_PRESETS = {
       ['straight', { len: 3 }, null, { type: 'oil', lane: 'center', pos: 0.4 }], ['corner', { size: 2 }, 'L'],
       ['straight', { len: 3 }, null, { type: 'crates', lane: 'right', pos: 0.5 }],
       ['straight', { len: 2 }, null, { type: 'spikes', lane: 'right', pos: 0.5 }], ['corner', { size: 2 }, 'L'],
+      ['straight', { len: 3 }], ['corner', { size: 2 }, 'L'],
+    ]),
+  },
+  'Ramp jump': {
+    width: 13,
+    tiles: () => buildFromTurtle([4, 8], E, [
+      ['start', { len: 2 }], ['straight', { len: 2 }, null, { type: 'ramp', lane: 'center', pos: 0.75 }],
+      ['straight', { len: 1 }, null, { type: 'spikes', lane: 'center', pos: 0.5 }], ['corner', { size: 2 }, 'L'],
+      ['straight', { len: 3 }], ['corner', { size: 2 }, 'L'],
+      ['straight', { len: 3 }, null, { type: 'ramp', lane: 'right', pos: 0.5 }],
+      ['straight', { len: 2 }], ['corner', { size: 2 }, 'L'],
       ['straight', { len: 3 }], ['corner', { size: 2 }, 'L'],
     ]),
   },

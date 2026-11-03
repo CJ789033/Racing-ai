@@ -11,6 +11,20 @@ const COL_LEADER = new THREE.Color('#ffc02e');
 const COL_DEAD = new THREE.Color('#5a5f66');
 const COL_DONE = new THREE.Color('#38e07b');
 
+let stripeTex = null;
+function stripes() {
+  if (stripeTex) return stripeTex;
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const x = cv.getContext('2d');
+  x.fillStyle = '#facc15'; x.fillRect(0, 0, 64, 64);
+  x.fillStyle = '#1f2937';
+  for (let i = -64; i < 128; i += 32) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i + 16, 0); x.lineTo(i + 80, 64); x.lineTo(i + 64, 64); x.fill(); }
+  stripeTex = new THREE.CanvasTexture(cv);
+  stripeTex.wrapS = stripeTex.wrapT = THREE.RepeatWrapping;
+  stripeTex.repeat.set(0.25, 0.25);
+  return stripeTex;
+}
+
 export class Scene3D {
   constructor(container) {
     this.container = container;
@@ -227,6 +241,17 @@ export class Scene3D {
           frame.position.copy(box.position); frame.position.y += s2 * 0.42; frame.rotation.y = box.rotation.y;
           g.add(box, frame);
         }
+      } else if (o.type === 'ramp') {
+        // wedge rising in the driving direction (local -Z here)
+        const shape = new THREE.Shape();
+        shape.moveTo(-o.a, 0); shape.lineTo(o.a, 0); shape.lineTo(o.a, o.h); shape.closePath(); // tall end ahead
+        const geo = new THREE.ExtrudeGeometry(shape, { depth: 2 * o.b, bevelEnabled: false });
+        geo.translate(0, 0, -o.b);
+        geo.rotateY(Math.PI / 2); // shape's X axis -> along the road, extrusion -> across it
+        const tex = stripes();
+        const ramp = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex }));
+        ramp.castShadow = true; ramp.receiveShadow = true;
+        g.add(ramp);
       } else if (o.type === 'oil') {
         const slick = new THREE.Mesh(new THREE.CircleGeometry(o.r, 24), new THREE.MeshPhongMaterial({ color: '#0b0b10', shininess: 120, specular: '#6655aa' }));
         slick.rotation.x = -Math.PI / 2; slick.scale.set(1, 0.85, 1); slick.position.y = 0.09;
@@ -310,9 +335,15 @@ export class Scene3D {
     }
     const m = this._m, q = this._q, v = this._v;
     cars.forEach((c, i) => {
-      // Dead cars sink slightly into the ground and turn grey
-      v.set(c.x, c.alive || c.finished ? 0 : -0.25, c.z);
+      // Dead cars sink slightly into the ground and turn grey; jumping cars fly
+      v.set(c.x, c.alive || c.finished ? c.y : -0.25, c.z);
       q.setFromAxisAngle(this._up, -c.heading);
+      if (c.airborne) {
+        // nose follows the flight path
+        this._q2 = this._q2 || new THREE.Quaternion(); this._ax = this._ax || new THREE.Vector3(0, 0, 1);
+        this._q2.setFromAxisAngle(this._ax, Math.atan2(c.vy, Math.max(1, c.speed)) * 0.8);
+        q.multiply(this._q2);
+      }
       m.compose(v, q, this._s);
       this.bodies.setMatrixAt(i, m);
       this.darks.setMatrixAt(i, m);

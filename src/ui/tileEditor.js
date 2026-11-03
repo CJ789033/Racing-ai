@@ -555,6 +555,15 @@ export function drawObstacle(ctx, tile, map, k, width, rev, swing = 0, alpha = 1
     ctx.beginPath(); ctx.ellipse(0, 0, L.r * k * 0.9, L.r * k, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = 'rgba(120,90,200,0.35)';
     ctx.beginPath(); ctx.ellipse(-L.r * k * 0.2, -L.r * k * 0.25, L.r * k * 0.35, L.r * k * 0.2, 0.4, 0, Math.PI * 2); ctx.fill();
+  } else if (o.type === 'ramp') {
+    // yellow/black wedge, chevrons point the way the cars jump
+    ctx.fillStyle = '#facc15'; ctx.fillRect(-L.a * k, -L.b * k, 2 * L.a * k, 2 * L.b * k);
+    ctx.fillStyle = '#1f2937';
+    const n = Math.max(2, Math.round(L.b * 2 / 2));
+    for (let j = 0; j < n; j++) {
+      const y = -L.b * k + (j + 0.5) * (2 * L.b * k / n), r = Math.min(L.a * 0.8, L.b / n) * k;
+      ctx.beginPath(); ctx.moveTo(-r, y - r); ctx.lineTo(r * 0.6, y); ctx.lineTo(-r, y + r); ctx.lineTo(-r * 0.4, y); ctx.fill();
+    }
   } else if (o.type === 'hammer') {
     ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.setLineDash([2 * k, 2 * k]); ctx.lineWidth = Math.max(1, 0.3 * k);
     ctx.beginPath(); ctx.moveTo(0, -L.amp * k); ctx.lineTo(0, L.amp * k); ctx.stroke(); ctx.setLineDash([]);

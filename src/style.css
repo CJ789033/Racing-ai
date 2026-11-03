@@ -10,8 +10,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #14171c; col
 .tab { flex-direction: row; font-size: 13px; padding: 6px 10px; }
 .tab.active { background: #2a5d8f; border-color: #3fa7ff; }
 .palette { position: absolute; left: calc(8px + env(safe-area-inset-left)); top: 120px;
-  display: grid; grid-auto-flow: column; grid-template-rows: repeat(4, auto); gap: 4px; padding: 5px; overflow: hidden; }
-.palette.horizontal { grid-auto-flow: row; grid-template-rows: none; grid-template-columns: repeat(4, auto); left: 50%; transform: translateX(-50%); }
+  display: grid; grid-auto-flow: row dense; gap: 4px; padding: 5px; overflow: hidden; }
+.palette .paletteItem { grid-column: 1; }
+.palette .paletteItem.obstacle { grid-column: 2; }
+.palette.horizontal { grid-auto-flow: column dense; left: 50%; transform: translateX(-50%); }
+.palette.horizontal .paletteItem { grid-column: auto; grid-row: 1; }
+.palette.horizontal .paletteItem.obstacle { grid-row: 2; }
 .paletteItem { width: 64px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px;
   border-radius: 8px; border: 2px solid transparent; cursor: grab; touch-action: none; }
 .paletteItem.obstacle { background: rgba(255,255,255,0.05); }

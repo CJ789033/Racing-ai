@@ -12,6 +12,7 @@ export function obstacleLayout(type, lane, hw) {
     case 'crates': return { lat: side * hw * 0.5, a: 1.6, b: side ? hw * 0.5 : hw * 0.35 };
     case 'oil':    return { lat: side * hw * 0.45, r: hw * 0.6 };
     case 'hammer': return { lat: 0, amp: hw * 0.85, headR: 1.6, period: 2.4 };
+    case 'ramp':   return { lat: side * hw * 0.5, a: 3, b: side ? hw * 0.5 : hw * 0.45, h: 1.5 };
     default: return { lat: 0 };
   }
 }
@@ -51,6 +52,12 @@ export function obstacleContact(o, x, z, t) {
     }
     case 'oil':
       return (x - o.x) ** 2 + (z - o.z) ** 2 < o.r * o.r ? 'oil' : null;
+    case 'ramp': {
+      // launches the car once its centre reaches the top half of the ramp
+      const dx = x - o.x, dz = z - o.z;
+      const u = dx * o.tx + dz * o.tz, v = dx * o.nx + dz * o.nz;
+      return u > 0 && u < o.a && Math.abs(v) < o.b ? 'ramp' : null;
+    }
     case 'hammer': {
       const lat = hammerLat(o, t);
       const hx = o.cx + o.nx * lat, hz = o.cz + o.nz * lat;
@@ -60,7 +67,7 @@ export function obstacleContact(o, x, z, t) {
   return null;
 }
 
-/** Distance along a ray to the obstacle (maxT if missed). Oil can't be "seen". */
+/** Distance along a ray to the obstacle (maxT if missed). Oil and ramps are too low to be "seen". */
 export function obstacleRay(o, ox, oz, dx, dz, t, maxT) {
   if (o.type === 'spikes' || o.type === 'crates') {
     // ray vs oriented rectangle (slab method in the obstacle's frame)
