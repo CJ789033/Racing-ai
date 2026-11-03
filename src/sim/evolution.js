@@ -4,7 +4,7 @@ import { NeuralNet, gaussian } from './nn.js';
 import { Car, INPUT_SIZE, OUTPUT_SIZE } from './car.js';
 
 export const DEFAULT_SETTINGS = {
-  populationSize: 40,
+  populationSize: 50,
   hidden: [12, 8],
   elites: 3,
   mutationRate: 0.08,     // chance each weight is mutated

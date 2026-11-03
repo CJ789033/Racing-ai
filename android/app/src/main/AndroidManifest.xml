@@ -37,5 +37,6 @@
 
     <!-- Permissions -->
 
-    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- No INTERNET permission: the game and all AI training run fully offline on the device.
+         (Add it back only if you need live-reload during development: `npx cap run android -l`.) -->
 </manifest>

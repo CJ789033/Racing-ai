@@ -18,9 +18,10 @@ export class Track {
    * @param {{x:number,z:number}[]} points closed loop of control points (metres)
    * @param {number} width track width in metres
    */
-  constructor(points, width = 12) {
+  constructor(points, width = 12, { polyline = false } = {}) {
     if (points.length < 3) throw new Error('A track needs at least 3 points');
     this.points = points.map(p => ({ x: p.x, z: p.z }));
+    this.polyline = polyline; // true: points already form the centerline (grid pieces)
     this.width = width;
     this.halfWidth = width / 2;
     this.build();
@@ -28,9 +29,9 @@ export class Track {
 
   build() {
     const P = this.points, n = P.length;
-    // 1. Dense spline sampling
-    const dense = [];
-    for (let i = 0; i < n; i++) {
+    // 1. Dense spline sampling (or use the given polyline as-is)
+    const dense = this.polyline ? P : [];
+    for (let i = 0; i < n && !this.polyline; i++) {
       const p0 = P[(i - 1 + n) % n], p1 = P[i], p2 = P[(i + 1) % n], p3 = P[(i + 2) % n];
       const span = Math.hypot(p2.x - p1.x, p2.z - p1.z);
       const steps = Math.max(8, Math.ceil(span / 0.5));

@@ -9,9 +9,10 @@ Runs in any browser and packages as an Android APK via [Capacitor](https://capac
 
 | Piece | What it does | File |
 |---|---|---|
-| Track builder | Tap to place control points, drag to move; a smooth closed spline is built through them. Warns about corners too tight to drive. | `src/ui/editor.js`, `src/sim/track.js` |
+| Track builder – 🧩 Pieces | Drag **Start / Straight / Corner / Chicane** pieces from the palette onto a 10×8 grid (30 m cells). Tap a piece to rotate it, drag it to move it, drag it off the grid to remove it (or use Delete mode). The editor follows the chain from the Start piece and shows driving-direction arrows when the loop is closed, or marks the gap / mis-rotated piece in red. | `src/ui/tileEditor.js`, `src/sim/tiles.js` |
+| Track builder – ✏️ Freehand | Tap to place control points, drag to move; a smooth closed spline is built through them. Warns about corners too tight to drive. | `src/ui/editor.js`, `src/sim/track.js` |
 | Car physics | Top-down bicycle model: engine, brakes, drag, grip limit (understeer + tyre scrub if you corner too fast). | `src/sim/car.js` |
-| Sensors (inputs) | 9 distance rays to the track edges, speed, position across the track, heading error, and the track's upcoming curvature 15/35/70 m ahead. 15 inputs in total. | `src/sim/car.js` |
+| Sensors (inputs) | 9 distance rays to the track edges, speed, position across the track, and the direction (relative to the car) of the road 10/25/45/70 m ahead – like a driver looking through the corner. 15 inputs in total. | `src/sim/car.js` |
 | Brain | Feed-forward net, `15 → 12 → 8 → 2` (tanh). Outputs **steering** and **throttle/brake**. | `src/sim/nn.js` |
 | Evolution | Genetic algorithm: fitness → tournament selection → two-point crossover → gaussian mutation, with elitism (the best-ever brain always survives) and mutation that ramps up automatically when progress stalls. | `src/sim/evolution.js` |
 | Fitness | Cars that don't finish are scored by distance covered. **Every finisher beats every non-finisher**, and among finishers a faster lap scores higher, so once the AI can get round, the only goal left is lap time. | `Car.computeFitness()` |
@@ -22,7 +23,13 @@ Each generation ends when all cars are out or the time limit is reached (1.25× 
 When you edit the track and restart, the population starts from the best brain so far (transfer
 learning), so it usually adapts quickly. Use **AI → Reset AI** to start from scratch.
 
-Progress (track, best brain, history) is saved automatically in local storage.
+### Everything runs locally
+
+All learning happens **on the device**: the physics, the neural networks and the genetic algorithm are
+plain JavaScript running inside the app. There is no server, no cloud training and no network access
+(the Android app does not even request the INTERNET permission; three.js is bundled into the app). The track, best brain and history are
+saved automatically in the device's local storage, so training continues where it left off after
+closing the app.
 
 ### Controls
 
@@ -38,7 +45,7 @@ Car colours: 🟡 leader · 🟣 elite (unchanged from last gen) · 🔵 racing 
 ```bash
 npm install
 npm run dev        # open the printed URL (works on your phone on the same Wi-Fi too)
-npm test           # headless check that the AI learns to lap the preset tracks
+npm test           # headless check that the AI learns to lap every preset track (freehand + pieces)
 ```
 
 ## Getting the APK
@@ -60,7 +67,7 @@ Or `npx cap open android` to open the project in Android Studio and run it on a 
 ## Ideas for next steps
 
 - Ghost replay of the best lap, and a "race the AI yourself" mode
-- More track pieces: elevation, banking, different surfaces (grass = slow, not death)
+- More pieces: wide 2×2 sweepers, crossovers/bridges, elevation, banking, different surfaces (grass = slow, not death)
 - Multiple laps / flying laps, and checkpoints with split times
 - NEAT-style evolving network topology
 - Several tracks at once so brains generalise

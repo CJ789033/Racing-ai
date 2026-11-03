@@ -2,15 +2,19 @@ import { Track, PRESETS, randomTrackPoints } from './sim/track.js';
 import { Evolution, DEFAULT_SETTINGS, DT } from './sim/evolution.js';
 import { Scene3D } from './render/scene3d.js';
 import { TrackEditor } from './ui/editor.js';
+import { TileEditor } from './ui/tileEditor.js';
+import { TILE_PRESETS, traceLayout } from './sim/tiles.js';
 import { drawNetwork, drawChart } from './ui/panels.js';
 
 const $ = id => document.getElementById(id);
-const SAVE_KEY = 'racing-ai-save-v1';
+const SAVE_KEY = 'racing-ai-save-v2';
 const SPEEDS = [1, 2, 5, 10, 25, 'MAX'];
 
 // ---------------------------------------------------------------- state
 const state = {
   mode: 'editor',
+  editorKind: 'tiles', // tiles | spline
+  def: null,           // what the player built: { kind, width, tiles | points }
   track: null,
   evo: null,
   settings: { ...DEFAULT_SETTINGS },
@@ -21,13 +25,74 @@ const state = {
 
 const scene = new Scene3D($('view3d'));
 const editor = new TrackEditor($('editorCanvas'), { onChange: updateEditorInfo });
+const tileEditor = new TileEditor($('tileCanvas'), $('palette'), {
+  onChange: updateEditorInfo,
+  getReserved: () => {
+    // Palette: a row above the bottom bar in portrait, a column on the left otherwise
+    const palEl = $('palette');
+    const top = $('editorTop').getBoundingClientRect(), bar = $('editorBar').getBoundingClientRect();
+    const portrait = window.innerHeight > window.innerWidth;
+    palEl.classList.toggle('horizontal', portrait);
+    if (portrait) {
+      palEl.style.top = 'auto'; palEl.style.maxHeight = '';
+      palEl.style.bottom = (window.innerHeight - bar.top + 6) + 'px';
+    } else {
+      palEl.style.bottom = 'auto';
+      palEl.style.top = (top.bottom + 6) + 'px';
+      palEl.style.maxHeight = Math.max(120, bar.top - top.bottom - 12) + 'px';
+    }
+    const pal = palEl.getBoundingClientRect();
+    return portrait
+      ? { top: top.bottom, bottom: window.innerHeight - pal.top, left: 0, right: 0 }
+      : { top: top.bottom, bottom: window.innerHeight - bar.top, left: pal.right, right: 0 };
+  },
+});
+window.__tileEditor = tileEditor; // handy for automated UI tests
+const activeEditor = () => (state.editorKind === 'tiles' ? tileEditor : editor);
+
+/** Build the simulation track from a saved/edited definition. */
+function buildTrack(def) {
+  if (def.kind === 'tiles') {
+    const res = traceLayout(def.tiles);
+    if (!res.ok) throw new Error(res.error.msg);
+    return new Track(res.points, def.width, { polyline: true });
+  }
+  return new Track(def.points, def.width);
+}
+
+function currentDef() {
+  return state.editorKind === 'tiles'
+    ? { kind: 'tiles', width: tileEditor.width, tiles: tileEditor.tiles.map(({ type, rot, c, r }) => ({ type, rot, c, r })) }
+    : { kind: 'spline', width: editor.width, points: editor.points.map(({ x, z }) => ({ x, z })) };
+}
+
+function loadDefIntoEditor(def) {
+  setEditorKind(def.kind === 'tiles' ? 'tiles' : 'spline');
+  if (def.kind === 'tiles') tileEditor.setTiles(def.tiles, def.width);
+  else editor.setPoints(def.points, def.width);
+}
+
+function setEditorKind(kind) {
+  state.editorKind = kind;
+  const el = $('editor');
+  el.classList.toggle('mode-tiles', kind === 'tiles');
+  el.classList.toggle('mode-free', kind !== 'tiles');
+  $('tabTiles').classList.toggle('active', kind === 'tiles');
+  $('tabFree').classList.toggle('active', kind !== 'tiles');
+  // presets for this mode
+  const sel = $('ePreset');
+  sel.innerHTML = '<option value="">Presets…</option>';
+  const names = kind === 'tiles' ? Object.keys(TILE_PRESETS) : [...Object.keys(PRESETS), 'Random'];
+  for (const name of names) { const o = document.createElement('option'); o.value = name; o.textContent = name; sel.appendChild(o); }
+  if (state.mode === 'editor') requestAnimationFrame(() => { activeEditor().resize(); updateEditorInfo(activeEditor()); });
+}
 
 // ---------------------------------------------------------------- persistence
 function save() {
   if (!state.track) return;
   const evo = state.evo;
   const data = {
-    track: state.track.toJSON(),
+    track: state.def,
     settings: state.settings,
     shadows: state.shadows,
     evo: evo && {
@@ -50,18 +115,18 @@ function enterEditor() {
   state.mode = 'editor';
   $('raceHud').classList.add('hidden');
   $('editor').classList.remove('hidden');
-  editor.resize();
+  activeEditor().resize();
+  updateEditorInfo(activeEditor());
 }
 
-function sameTrack(a, b) {
-  return a && b && a.width === b.width && a.points.length === b.points.length &&
-    a.points.every((p, i) => Math.abs(p.x - b.points[i].x) < 1e-6 && Math.abs(p.z - b.points[i].z) < 1e-6);
-}
+const sameDef = (a, b) => !!a && !!b && JSON.stringify(a) === JSON.stringify(b);
 
 function startRace({ fromSave = null, reset = false } = {}) {
-  if (!editor.valid) return;
-  const newTrack = new Track(editor.points, editor.width);
-  const trackChanged = !state.track || !sameTrack(newTrack, state.track);
+  if (!activeEditor().valid) return;
+  const def = currentDef();
+  const newTrack = buildTrack(def);
+  const trackChanged = !state.track || !sameDef(def, state.def);
+  state.def = def;
 
   if (fromSave) {
     state.track = newTrack;
@@ -93,25 +158,32 @@ function startRace({ fromSave = null, reset = false } = {}) {
 
 // ---------------------------------------------------------------- editor UI
 function updateEditorInfo(ed) {
+  if (ed !== activeEditor()) return;
   $('eGo').disabled = !ed.valid;
   $('eGo').style.opacity = ed.valid ? 1 : 0.5;
-  $('editorInfo').textContent = ed.preview
-    ? `Length ${ed.preview.length.toFixed(0)} m · ${ed.points.length} points · width ${ed.width} m`
-    : '';
-  const issue = $('editorIssue');
-  issue.classList.toggle('hidden', !ed.issue);
-  if (ed.issue) issue.textContent = '⚠ ' + ed.issue.text;
+  let info = '', issue = null;
+  if (ed === tileEditor) {
+    const res = ed.result;
+    if (ed.preview) info = `✅ Closed loop · ${ed.preview.length.toFixed(0)} m · ${res.order.length} pieces` + (res.unused ? ` · ${res.unused} unused` : '');
+    else if (ed.tiles.length) issue = res.error.msg;
+    else info = 'Start by dragging the Start piece onto the grid';
+  } else {
+    if (ed.preview) info = `Length ${ed.preview.length.toFixed(0)} m · ${ed.points.length} points · width ${ed.width} m`;
+    issue = ed.issue && ed.issue.text;
+  }
+  $('editorInfo').textContent = info;
+  const box = $('editorIssue');
+  box.classList.toggle('hidden', !issue);
+  if (issue) box.textContent = '⚠ ' + issue;
   $('eWidthLbl').textContent = ed.width;
   $('eWidth').value = ed.width;
 }
 
 const presetSel = $('ePreset');
-for (const name of [...Object.keys(PRESETS), 'Random']) {
-  const o = document.createElement('option'); o.value = name; o.textContent = name; presetSel.appendChild(o);
-}
 presetSel.onchange = () => {
   const v = presetSel.value;
-  if (v === 'Random') editor.setPoints(randomTrackPoints(), editor.width);
+  if (state.editorKind === 'tiles') { if (TILE_PRESETS[v]) tileEditor.setTiles(TILE_PRESETS[v].tiles(), TILE_PRESETS[v].width); }
+  else if (v === 'Random') editor.setPoints(randomTrackPoints(), editor.width);
   else if (PRESETS[v]) editor.setPoints(PRESETS[v].points, PRESETS[v].width);
   presetSel.value = '';
 };
@@ -126,11 +198,19 @@ $('eDel').onclick = () => setEditMode('delete');
 $('eReverse').onclick = () => editor.reverse();
 $('eStart').onclick = () => editor.rotateStart();
 $('eClear').onclick = () => editor.setPoints([]);
-$('eWidth').oninput = e => editor.setWidth(Number(e.target.value));
+$('eWidth').oninput = e => activeEditor().setWidth(Number(e.target.value));
+$('tabTiles').onclick = () => setEditorKind('tiles');
+$('tabFree').onclick = () => setEditorKind('spline');
+$('tDel').onclick = () => {
+  tileEditor.mode = tileEditor.mode === 'delete' ? 'place' : 'delete';
+  $('tDel').classList.toggle('active', tileEditor.mode === 'delete');
+  tileEditor.draw();
+};
+$('tClear').onclick = () => tileEditor.setTiles([]);
 $('eGo').onclick = () => startRace();
 
 // ---------------------------------------------------------------- race UI
-$('bEdit').onclick = () => { editor.setPoints(state.track.points, state.track.width); enterEditor(); };
+$('bEdit').onclick = () => { loadDefIntoEditor(state.def); enterEditor(); };
 $('bPause').onclick = () => {
   state.paused = !state.paused;
   $('bPause').innerHTML = state.paused ? '▶️<small>Play</small>' : '⏸<small>Pause</small>';
@@ -265,16 +345,20 @@ function frame(now) {
 
 // ---------------------------------------------------------------- boot
 const saved = load();
+editor.setPoints(PRESETS.Kidney.points, PRESETS.Kidney.width);
+tileEditor.setTiles(TILE_PRESETS.Rectangle.tiles(), TILE_PRESETS.Rectangle.width);
 if (saved && saved.track) {
   state.settings = { ...DEFAULT_SETTINGS, ...saved.settings };
   state.shadows = saved.shadows ?? true;
-  editor.setPoints(saved.track.points, saved.track.width);
-  editor.resize();
-  try { startRace({ fromSave: saved.evo }); } catch (e) { console.error(e); enterEditor(); }
+  const def = saved.track.kind ? saved.track : { kind: 'spline', ...saved.track }; // older saves
+  try {
+    loadDefIntoEditor(def);
+    startRace({ fromSave: saved.evo });
+  } catch (e) { console.error(e); enterEditor(); }
 } else {
   // Phones get no shadows by default
   state.shadows = !/Android|iPhone|iPad/i.test(navigator.userAgent);
-  editor.setPoints(PRESETS.Kidney.points, PRESETS.Kidney.width);
+  setEditorKind('tiles');
   enterEditor();
 }
 requestAnimationFrame(frame);

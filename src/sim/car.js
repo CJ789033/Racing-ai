@@ -15,8 +15,10 @@ export const CAR = {
 // Sensor ray angles relative to heading (radians)
 export const RAY_ANGLES = [-80, -45, -22, -8, 0, 8, 22, 45, 80].map(d => d * Math.PI / 180);
 export const RAY_LENGTH = 70;
-// Inputs: rays + speed + lateral offset + heading error + 3 lookahead curvatures
-export const INPUT_SIZE = RAY_ANGLES.length + 6;
+// Distances (m) to the look-ahead points on the centerline
+export const LOOKAHEAD = [10, 25, 45, 70];
+// Inputs: rays + speed + lateral offset + direction to each look-ahead point
+export const INPUT_SIZE = RAY_ANGLES.length + 2 + LOOKAHEAD.length;
 export const OUTPUT_SIZE = 2; // steer, throttle/brake
 
 const STALL_TIME = 3;   // seconds without progress -> eliminated
@@ -62,13 +64,12 @@ export class Car {
     let k = RAY_ANGLES.length;
     inp[k++] = this.speed / CAR.maxSpeed;
     inp[k++] = this.lateral / tr.halfWidth;
-    // heading error relative to track direction
-    inp[k++] = angleDiff(tr.headingAt(this.seg), h) / Math.PI;
-    // upcoming curvature: track heading change at 3 lookahead distances
-    const base = tr.headingAt(this.seg);
-    for (const ahead of [15, 35, 70]) {
-      const idx = this.seg + Math.round(ahead / tr.step);
-      inp[k++] = clamp(angleDiff(tr.headingAt(idx), base) / (Math.PI / 2), -1, 1);
+    // Where is the road going? Angle from the car's heading to centerline
+    // points further ahead (like a driver looking through the corner).
+    for (const ahead of LOOKAHEAD) {
+      const idx = tr.wrap(this.seg + Math.round(ahead / tr.step));
+      const ang = Math.atan2(tr.cz[idx] - this.z, tr.cx[idx] - this.x);
+      inp[k++] = clamp(angleDiff(ang, h) / (Math.PI / 2), -1, 1);
     }
     return inp;
   }
