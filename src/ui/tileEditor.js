@@ -28,7 +28,7 @@ export class TileEditor {
     this.multi = new Set(); // bulk selection (select mode)
     this.box = null;        // selection rectangle being dragged
     this.tab = 'road';
-    this.paletteSel = { kind: 'piece', type: 'straight', key: 'piece:Straight' };
+    this.paletteSel = { kind: 'piece', type: 'straight', key: 'piece:Straight', tile: { type: 'straight' } };
     this.selected = null;
     this.drag = null;
     this.press = null;
@@ -42,9 +42,19 @@ export class TileEditor {
     // mouse wheel over a piece rotates it (phones have no wheel, so scrolling never rotates there)
     canvas.addEventListener('wheel', e => this.wheel(e), { passive: false });
     this._wheelAcc = 0;
+    // view: zoom (1 = whole grid fits) and pan offset in canvas px
+    this.zoom = 1; this.panX = 0; this.panY = 0;
+    this.pointers = new Map(); // active touches/pointers on the canvas (for pinch)
+    this.pinch = null; this.panDrag = null; this.emptyPress = null;
+    canvas.addEventListener('contextmenu', e => e.preventDefault()); // right-drag pans
     window.addEventListener('pointermove', e => this.pointerMove(e));
     window.addEventListener('pointerup', e => this.pointerUp(e));
-    window.addEventListener('pointercancel', () => { this.drag = null; this.press = null; this.draw(); });
+    window.addEventListener('pointercancel', e => {
+      this.pointers.delete(e.pointerId);
+      this.drag = null; this.press = null; this.panDrag = null; this.emptyPress = null;
+      if (this.pointers.size < 2) this.pinch = null;
+      this.draw();
+    });
     window.addEventListener('resize', () => this.resize());
     window.addEventListener('keydown', e => this.keyDown(e));
     this.buildPalette();
@@ -126,11 +136,45 @@ export class TileEditor {
     const pad = 6;
     const availW = r.width - res.left - res.right - 2 * pad;
     const availH = r.height - res.top - res.bottom - 2 * pad;
-    const cellPx = Math.max(10, Math.min(availW / COLS, availH / ROWS));
-    this.cellPx = cellPx * dpr;
-    this.originX = (res.left + pad + (availW - cellPx * COLS) / 2) * dpr;
-    this.originY = (res.top + pad + (availH - cellPx * ROWS) / 2) * dpr;
+    this.fitCell = Math.max(10, Math.min(availW / COLS, availH / ROWS)) * dpr;
+    this.viewCenter = { x: (res.left + pad + availW / 2) * dpr, y: (res.top + pad + availH / 2) * dpr };
+    this.viewArea = { x0: (res.left + pad) * dpr, y0: (res.top + pad) * dpr, x1: (res.left + pad + availW) * dpr, y1: (res.top + pad + availH) * dpr };
+    this.applyView();
+  }
+
+  // ------------------------------------------------------------ camera (zoom + pan)
+  applyView() {
+    this.cellPx = this.fitCell * this.zoom;
+    const gw = COLS * this.cellPx, gh = ROWS * this.cellPx, A = this.viewArea, m = 60 * this.dpr;
+    // keep at least a strip of the grid on screen
+    const minX = A.x0 + m - gw, maxX = A.x1 - m, minY = A.y0 + m - gh, maxY = A.y1 - m;
+    let ox = this.viewCenter.x - gw / 2 + this.panX, oy = this.viewCenter.y - gh / 2 + this.panY;
+    ox = Math.max(minX, Math.min(maxX, ox)); oy = Math.max(minY, Math.min(maxY, oy));
+    this.panX = ox - (this.viewCenter.x - gw / 2); this.panY = oy - (this.viewCenter.y - gh / 2);
+    this.originX = ox; this.originY = oy;
     this.draw();
+  }
+
+  /** Zoom by factor f around canvas point (px, py). */
+  zoomAt(px, py, f) {
+    const z = Math.max(0.6, Math.min(6, this.zoom * f));
+    const k = z / this.zoom;
+    if (k === 1) return;
+    const ox = px - (px - this.originX) * k, oy = py - (py - this.originY) * k;
+    this.zoom = z;
+    const cell = this.fitCell * z;
+    this.panX = ox - (this.viewCenter.x - COLS * cell / 2);
+    this.panY = oy - (this.viewCenter.y - ROWS * cell / 2);
+    this.applyView();
+  }
+
+  zoomBy(f) { if (this.viewCenter) this.zoomAt(this.viewCenter.x, this.viewCenter.y, f); }
+  fitView() { this.zoom = 1; this.panX = 0; this.panY = 0; if (this.viewCenter) this.applyView(); }
+  panBy(dx, dy) { this.panX += dx; this.panY += dy; this.applyView(); }
+
+  canvasPoint(e) {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * this.dpr, y: (e.clientY - r.top) * this.dpr };
   }
 
   /** canvas px for a world point (metres) */
@@ -204,10 +248,17 @@ export class TileEditor {
   }
 
   wheel(e) {
+    e.preventDefault(); // never scroll the page
     const cell = this.cellAt(e.clientX, e.clientY);
-    const t = (cell && this.tileAt(cell.c, cell.r)) || this.selected;
-    if (!t || this.mode !== 'place') return;
-    e.preventDefault(); // don't scroll the page while rotating
+    const t = this.selected;
+    const overSelected = t && cell && footprint(t).some(f => f.c === cell.c && f.r === cell.r);
+    // wheel over the selected piece rotates it; anywhere else (or pinch/ctrl+wheel) zooms
+    if (!overSelected || this.mode !== 'place' || e.ctrlKey) {
+      const p = this.canvasPoint(e);
+      const dy = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY;
+      this.zoomAt(p.x, p.y, Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0015)));
+      return;
+    }
     this._wheelAcc += e.deltaY;
     if (Math.abs(this._wheelAcc) < 40) return; // one turn per wheel notch
     const dir = this._wheelAcc > 0 ? 1 : 3;
@@ -217,6 +268,17 @@ export class TileEditor {
 
   canvasDown(e) {
     e.preventDefault();
+    this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.pointers.size === 2) {
+      // second finger: pinch to zoom / two-finger pan; cancel whatever the first finger started
+      this.press = null; this.drag = null; this.box = null; this.rotDrag = null; this.emptyPress = null; this.panDrag = null;
+      const [a, b] = [...this.pointers.values()];
+      this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+      this.draw();
+      return;
+    }
+    if (this.pointers.size > 2) return;
+    if (e.button === 1 || e.button === 2) { this.panDrag = { x: e.clientX, y: e.clientY }; return; } // middle / right drag pans
     // grab the rotation handle of the selected piece?
     const h = this.rotationHandle();
     if (h) {
@@ -230,10 +292,11 @@ export class TileEditor {
       }
     }
     const cell = this.cellAt(e.clientX, e.clientY);
-    if (!cell) { this.select(null); return; }
+    if (!cell) { this.emptyPress = { x: e.clientX, y: e.clientY, cell: null }; return; } // tap = deselect, drag = pan
     const t = this.tileAt(cell.c, cell.r);
     if (this.mode === 'delete') {
       if (t) { this.remove(t); this.changed(); }
+      else this.emptyPress = { x: e.clientX, y: e.clientY, cell: null, noop: true };
       return;
     }
     if (this.mode === 'select') {
@@ -244,14 +307,41 @@ export class TileEditor {
       return;
     }
     if (t) { this.press = { tile: t, x: e.clientX, y: e.clientY, cell }; return; }
-    if (this.selected) { this.select(null); return; } // tap on empty grass closes the panel
+    // empty grass: a tap places the selected piece (or closes the panel), a drag moves the view
+    this.emptyPress = { x: e.clientX, y: e.clientY, cell };
+  }
+
+  /** What a plain tap on empty grass does. */
+  emptyTap(p) {
+    if (p.noop) return;
+    if (!p.cell || this.selected) { this.select(null); return; }
     if (this.paletteSel.kind === 'piece') {
-      const tile = this.clampToGrid({ ...this.paletteSel.tile, rot: 0, c: cell.c, r: cell.r });
+      const tile = this.clampToGrid({ ...(this.paletteSel.tile || { type: this.paletteSel.type }), rot: 0, c: p.cell.c, r: p.cell.r });
       this.place(tile);
     } else this.onMessage('Drag obstacles onto a track piece');
   }
 
   pointerMove(e) {
+    if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.pinch) {
+      if (this.pointers.size < 2) return;
+      const [a, b] = [...this.pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const r = this.canvas.getBoundingClientRect();
+      this.panBy((mx - this.pinch.mx) * this.dpr, (my - this.pinch.my) * this.dpr);
+      if (this.pinch.d > 10) this.zoomAt((mx - r.left) * this.dpr, (my - r.top) * this.dpr, d / this.pinch.d);
+      this.pinch = { d, mx, my };
+      return;
+    }
+    if (this.emptyPress && !this.panDrag && Math.hypot(e.clientX - this.emptyPress.x, e.clientY - this.emptyPress.y) > DRAG_THRESHOLD) {
+      this.panDrag = { x: this.emptyPress.x, y: this.emptyPress.y };
+      this.emptyPress = null;
+    }
+    if (this.panDrag) {
+      this.panBy((e.clientX - this.panDrag.x) * this.dpr, (e.clientY - this.panDrag.y) * this.dpr);
+      this.panDrag.x = e.clientX; this.panDrag.y = e.clientY;
+      return;
+    }
     if (this.rotDrag) {
       const { k, px, py } = this.rotFromPointer(e);
       this.rotDrag.x = px; this.rotDrag.y = py;
@@ -287,6 +377,10 @@ export class TileEditor {
   }
 
   pointerUp(e) {
+    this.pointers.delete(e.pointerId);
+    if (this.pinch) { if (this.pointers.size === 0) this.pinch = null; return; } // ignore the rest of a pinch
+    if (this.panDrag) { this.panDrag = null; return; }
+    if (this.emptyPress) { const p = this.emptyPress; this.emptyPress = null; this.emptyTap(p); return; }
     if (this.rotDrag) { this.rotDrag = null; this.draw(); return; }
     if (this.box) {
       const a = this.cellAtClamped(this.box.x0, this.box.y0), b = this.cellAtClamped(this.box.x1, this.box.y1);
@@ -498,6 +592,7 @@ export class TileEditor {
     if (lost && !force) { setGridSize(prev.cols, prev.rows); return false; } // caller asks the player first
     this.tiles = keep;
     this.selected = null;
+    this.zoom = 1; this.panX = 0; this.panY = 0;
     this.resize();
     this.changed();
     if (lost) this.onMessage(`${lost} piece${lost > 1 ? 's' : ''} removed`);

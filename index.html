@@ -59,12 +59,17 @@
       <canvas id="tileCanvas" class="tile-only"></canvas>
       <div id="palette" class="palette card tile-only"></div>
       <div id="props" class="props card tile-only"></div>
+      <div id="zoomCtl" class="zoomCtl tile-only">
+        <button id="zIn" title="Zoom in">＋</button>
+        <button id="zOut" title="Zoom out">－</button>
+        <button id="zFit" title="Show the whole grid">⤢</button>
+      </div>
       <div id="editorTop" class="editorTop card">
         <div class="tabs">
           <button id="tabTiles" class="tab active">🧩 Pieces</button>
           <button id="tabFree" class="tab">✏️ Freehand</button>
         </div>
-        <div class="muted small tile-only help">Drag pieces &amp; obstacles onto the grid · tap a piece to edit it · rotate: tap it again, drag the ⟳ handle, or use the mouse wheel · drag off the grid to remove.</div>
+        <div class="muted small tile-only help">Drag pieces &amp; obstacles onto the grid · tap a piece to edit it · rotate: tap it again, drag the ⟳ handle, or scroll over it · drag off the grid to remove · drag empty grass to move the view, pinch or scroll to zoom.</div>
         <div class="muted small free-only help">Tap to add points · drag to move · yellow = start.</div>
         <div id="editorIssue" class="warn hidden"></div>
         <div id="editorInfo" class="small"></div>

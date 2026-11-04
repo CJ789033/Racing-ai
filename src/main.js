@@ -69,6 +69,7 @@ function layoutTileUI() {
   }
   const pal = palEl.getBoundingClientRect(), props = propsEl.getBoundingClientRect();
   let reserved;
+  const zc = $('zoomCtl');
   if (portrait) reserved = { top: top.bottom, bottom: H - Math.min(pal.top, H - 1), left: 0, right: 0 };
   else {
     // grid either below the info card, or beside it – whichever gives bigger cells
@@ -81,6 +82,9 @@ function layoutTileUI() {
   // In portrait the grid keeps its size when the panel opens/closes (no jumping)
   if (lastPanelOpen !== null && lastPanelOpen !== open && !portrait) requestAnimationFrame(() => tileEditor.resize());
   lastPanelOpen = open;
+  // zoom buttons sit in the top-left corner of the grid area
+  zc.style.left = (reserved.left + 10) + 'px';
+  zc.style.top = (reserved.top + 10) + 'px';
   return reserved;
 }
 window.__tileEditor = tileEditor; // handy for automated UI tests
@@ -265,6 +269,9 @@ function setTileMode(mode) {
 $('tDel').onclick = () => setTileMode(tileEditor.mode === 'delete' ? 'place' : 'delete');
 $('tSel').onclick = () => setTileMode(tileEditor.mode === 'select' ? 'place' : 'select');
 tileEditor.onExitSelect = () => setTileMode('place');
+$('zIn').onclick = () => tileEditor.zoomBy(1.35);
+$('zOut').onclick = () => tileEditor.zoomBy(1 / 1.35);
+$('zFit').onclick = () => tileEditor.fitView();
 $('tClear').onclick = async () => {
   const n = tileEditor.tiles.length;
   if (n && !await askConfirm('Clear the track?', `This removes all ${n} piece${n > 1 ? 's' : ''} (and their obstacles).`, { ok: 'Clear' })) return;
