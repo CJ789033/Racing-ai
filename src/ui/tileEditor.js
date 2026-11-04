@@ -1107,6 +1107,14 @@ export function drawTile(ctx, tile, map, k, width, alpha = 1, rev = false, pass 
       ctx.setLineDash([1.5 * k, 2.5 * k]); ctx.stroke(); ctx.setLineDash([]);
     }
   }
+  if (g.barrier) {
+    // red/white barrier where the road stops
+    const b = g.barrier, L = Math.hypot(b.dx, b.dz) || 1, nx = -b.dz / L, nz = b.dx / L, hw = width / 2 + 1;
+    const [x1, y1] = map({ x: b.x + nx * hw, z: b.z + nz * hw }), [x2, y2] = map({ x: b.x - nx * hw, z: b.z - nz * hw });
+    ctx.lineCap = 'butt'; ctx.lineWidth = Math.max(3, 1.4 * k);
+    ctx.strokeStyle = '#f8fafc'; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.strokeStyle = '#dc2626'; ctx.setLineDash([1.6 * k, 1.6 * k]); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.setLineDash([]);
+  }
   if (g.island) {
     const [x, y] = map(g.island);
     ctx.fillStyle = '#5aa13a'; ctx.beginPath(); ctx.arc(x, y, (g.island.r - width / 2) * k, 0, Math.PI * 2); ctx.fill();

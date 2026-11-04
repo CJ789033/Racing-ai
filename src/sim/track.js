@@ -86,7 +86,7 @@ export class Track {
       const r = resample(e.points, SAMPLE_STEP);
       this.edgeStart[i] = all.length; this.edgeCount[i] = r.pts.length; this.edgeLen[i] = r.length;
       this.edgeA[i] = e.a; this.edgeB[i] = e.b;
-      for (const p of r.pts) all.push({ ...p, e: i, tunnel: !!e.tunnel, junction: !!e.junction });
+      for (const p of r.pts) all.push({ ...p, e: i, tunnel: !!e.tunnel, junction: !!e.junction, hill: !!e.hill });
     });
     const N = this.N = all.length;
     this.step = SAMPLE_STEP;
@@ -96,9 +96,10 @@ export class Track {
     this.lx = F(); this.lz = F(); this.rx = F(); this.rz = F();
     this.edgeOf = new Int32Array(N);
     this.tunnel = new Uint8Array(N); this.junction = new Uint8Array(N); this.level = new Uint8Array(N);
+    this.hill = new Uint8Array(N); // tunnel through a hill (short tunnels stay at ground level)
     all.forEach((p, i) => {
       this.cx[i] = p.x; this.cz[i] = p.z; this.ch[i] = p.h; this.edgeOf[i] = p.e;
-      this.tunnel[i] = p.tunnel ? 1 : 0; this.junction[i] = p.junction ? 1 : 0;
+      this.tunnel[i] = p.tunnel ? 1 : 0; this.junction[i] = p.junction ? 1 : 0; this.hill[i] = p.hill ? 1 : 0;
       this.level[i] = levelOf(p.h);
     });
     for (let e = 0; e < E; e++) {
@@ -234,6 +235,7 @@ export class Track {
     }
 
     this.islands = net.islands || [];
+    this.barriers = net.barriers || [];
     this.obstacles = prepareObstacles(this, net.obstacles || []);
   }
 

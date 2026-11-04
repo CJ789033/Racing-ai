@@ -38,6 +38,7 @@ export const PIECES = {
   chicane:    { label: 'Chicane',    params: { len: LEN([1, 2]), amp: { label: 'Wiggle', options: [2, 4, 6], default: 4, names: ['Gentle', 'Normal', 'Sharp'] }, tunnel: TUNNEL } },
   bridge:     { label: 'Bridge',     params: { len: LEN([3, 4, 5], 3), height: { label: 'Height', options: [5, 8, 12], default: 8, names: ['Low', 'Medium', 'High'] } },
                 desc: 'Climbs over whatever is under its middle – build roads underneath to make an overpass' },
+  deadend:    { label: 'Dead end',   params: {}, desc: 'The road just stops at a barrier – a trap for cars that take the wrong turn' },
   cross:      { label: 'Crossing',   params: {}, junction: true, desc: 'Two roads cross – cars go straight over' },
   tee:        { label: 'T junction', params: {}, junction: true, desc: 'Three-way junction – the AI picks a route' },
   yfork:      { label: 'Y fork',     params: {}, junction: true, desc: 'Road splits in two – the AI picks a route' },
@@ -51,7 +52,7 @@ export const PIECES = {
 export const PALETTE = {
   road: [
     { type: 'start' }, { type: 'straight' }, { type: 'corner' }, { type: 'chicane' },
-    { type: 'bridge' }, { type: 'straight', label: 'Tunnel', extra: { tunnel: 1 } },
+    { type: 'bridge' }, { type: 'straight', label: 'Tunnel', extra: { tunnel: 1 } }, { type: 'deadend' },
   ],
   junctions: [{ type: 'cross' }, { type: 'crossroads' }, { type: 'tee' }, { type: 'yfork' }, { type: 'trident' }, { type: 'roundabout' }, { type: 'bigRoundabout' }],
 };
@@ -120,6 +121,13 @@ function baseShape(tile) {
         edges: [{ a: 0, b: 1, f: u => ({ x: u * L, z: H2, h: height(u * L) }), len: L }],
       };
     }
+    case 'deadend':
+      // one way in; the road stops at a barrier near the far edge of the cell
+      return {
+        w: 1, h: 1, nodes: 2, ports: [{ x: 0, y: 0, e: 3 }],
+        edges: [{ a: 0, b: 1, f: line({ x: 0, z: H2 }, { x: C - 5, z: H2 }), len: C - 5 }],
+        barrier: { x: C - 4, z: H2, ax: 1, az: 0 },
+      };
     case 'cross':
       return {
         w: 1, h: 1, nodes: 4, junction: true,
@@ -259,6 +267,10 @@ export function pieceGeometry(tile) {
     cells: cells.map(c => ({ c: tile.c + c.x, r: tile.r + c.y, layer: c.layer, over: c.layer === 1 })),
     edges,
     island: base.island ? { ...toWorld(base.island), r: base.island.r } : null,
+    barrier: base.barrier ? (() => {
+      const p = toWorld(base.barrier), q = toWorld({ x: base.barrier.x + base.barrier.ax, z: base.barrier.z + base.barrier.az });
+      return { x: p.x, z: p.z, dx: q.x - p.x, dz: q.z - p.z }; // position + direction the road was heading
+    })() : null,
     length: base.edges.reduce((s, e) => s + e.len, 0),
   };
   geoCache.set(tile, { sig, geo });
@@ -327,14 +339,6 @@ export function traceLayout(tiles) {
   const order = [...inNet].map(i => tiles[i]);
   if (error) return { ok: false, order, error };
 
-  // Does the road continue as a tunnel beyond this end of the piece? (then stay deep)
-  const tunnelAt = (ti, localNode) => {
-    const p = geos[ti].ports[localNode];
-    if (!p) return false;
-    const m = portMap.get(`${p.c + DIR[p.e][0]},${p.r + DIR[p.e][1]},${opp(p.e)}`);
-    return !!m && geos[m[0]].edges.some(e => e.tunnel);
-  };
-
   // edges; the Start piece's road is cut at the start line into two halves
   const L_AHEAD = n, L_BEHIND = n + 1;
   const edges = [];
@@ -353,13 +357,14 @@ export function traceLayout(tiles) {
         return;
       }
       if (g.edges.length === 1) tileEdge.set(t, edges.length);
-      edges.push({ a, b, points: e.tunnel ? sinkTunnel(e.points, tunnelAt(ti, e.a), tunnelAt(ti, e.b)) : e.points, tunnel: e.tunnel, junction: e.junction });
+      edges.push({ a, b, points: e.points, tunnel: e.tunnel, junction: e.junction });
     });
   }
   // compact node ids
   const ids = new Map();
   const id = v => { if (!ids.has(v)) ids.set(v, ids.size); return ids.get(v); };
   for (const e of edges) { e.a = id(e.a); e.b = id(e.b); }
+  shapeTunnels(edges);
 
   // Can we get from just past the start line back round to it?
   const adj = Array.from({ length: ids.size }, () => []);
@@ -376,23 +381,68 @@ export function traceLayout(tiles) {
     obstacles.push({ ...o, edge: tileEdge.get(t), pos: clamp(o.pos ?? 0.5, 0.05, 0.95), lane: LANES.includes(o.lane) ? o.lane : 'center' });
   }
   const islands = order.map(t => pieceGeometry(t).island).filter(Boolean);
+  const barriers = order.map(t => pieceGeometry(t).barrier).filter(Boolean);
   return {
     ok: true, order, unused: tiles.length - order.length, tileEdge,
-    net: { edges, nodeCount: ids.size, aheadEdge, behindEdge, obstacles, islands, laps: paramValue(starts[0], 'laps') },
+    net: { edges, nodeCount: ids.size, aheadEdge, behindEdge, obstacles, islands, barriers, laps: paramValue(starts[0], 'laps') },
   };
 }
 
 function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
 
-/** Lower a tunnel road underground, sloping down/up at ends that open to the surface. */
-function sinkTunnel(points, deepA, deepB) {
-  const cum = [0];
-  for (let i = 1; i < points.length; i++) cum.push(cum[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z));
-  const L = cum[cum.length - 1], R = Math.min(CELL, L / 2);
-  const ease = d => (d >= R ? 1 : (1 - Math.cos(Math.PI * d / R)) / 2);
-  return points.map((p, i) => {
-    const fa = deepA ? 1 : ease(cum[i]), fb = deepB ? 1 : ease(L - cum[i]);
-    return { ...p, h: -TUNNEL_DEPTH * Math.min(fa, fb) };
+const MIN_DEEP_TUNNEL = 89; // shorter tunnels stay at ground level under a hill
+
+/**
+ * Shape every tunnel: joined tunnel pieces form one run. A long run dips
+ * underground (sloping down/up at its open ends); a short run (e.g. a single
+ * tunnel corner) can't dig down that fast, so it stays at ground level and is
+ * built as a tunnel through a hill instead.
+ */
+function shapeTunnels(edges) {
+  const byNode = new Map();
+  edges.forEach((e, i) => { for (const n of [e.a, e.b]) { if (!byNode.has(n)) byNode.set(n, []); byNode.get(n).push(i); } });
+  // two tunnel edges meeting at a plain join continue the same run
+  const nextAt = (n, from) => {
+    const l = byNode.get(n);
+    if (l.length !== 2) return -1;
+    const o = l[0] === from ? l[1] : l[0];
+    return edges[o].tunnel ? o : -1;
+  };
+  const done = new Set();
+  edges.forEach((e0, i0) => {
+    if (!e0.tunnel || done.has(i0)) return;
+    // walk back to one end of the run
+    let cur = i0, node = e0.a, guard = 0;
+    for (;;) { const p = nextAt(node, cur); if (p < 0 || p === i0 || guard++ > edges.length) break; node = edges[p].a === node ? edges[p].b : edges[p].a; cur = p; }
+    // walk forward collecting edges in order (and whether each is reversed)
+    const run = [];
+    let at = node, e = cur;
+    while (e >= 0 && !done.has(e)) {
+      done.add(e);
+      const rev = edges[e].b === at;
+      run.push({ e, rev });
+      at = rev ? edges[e].a : edges[e].b;
+      e = nextAt(at, e);
+    }
+    const closed = e >= 0; // the run loops back on itself: tunnel all the way round
+    // distance along the run at every point
+    let total = 0;
+    const along = run.map(({ e, rev }) => {
+      const pts = rev ? [...edges[e].points].reverse() : edges[e].points;
+      const d = [total];
+      for (let k = 1; k < pts.length; k++) d.push(d[k - 1] + Math.hypot(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z));
+      total = d[d.length - 1];
+      return rev ? d.reverse() : d;
+    });
+    const hill = !closed && total < MIN_DEEP_TUNNEL;
+    const R = Math.min(CELL, total / 2);
+    const ease = x => (x >= R ? 1 : (1 - Math.cos(Math.PI * x / R)) / 2);
+    run.forEach(({ e }, k) => {
+      edges[e].hill = hill;
+      edges[e].points = edges[e].points.map((p, j) => ({
+        ...p, h: hill ? 0 : closed ? -TUNNEL_DEPTH : -TUNNEL_DEPTH * Math.min(ease(along[k][j]), ease(total - along[k][j])),
+      }));
+    });
   });
 }
 
@@ -542,5 +592,16 @@ export const TILE_PRESETS = {
       ...buildFromTurtle([7, 4], E, [['start', { len: 1 }], ['straight', { len: 1 }], ['corner', { size: 1 }, 'L'], ['straight', { len: 2 }], ['corner', { size: 1 }, 'L'], ['straight', { len: 4 }], ['corner', { size: 1 }, 'L']]),
       ...buildFromTurtle([4, 7], 2, [['corner', { size: 1 }, 'R'], ['straight', { len: 2 }], ['corner', { size: 1 }, 'R'], ['straight', { len: 2 }], ['corner', { size: 1 }, 'R']]),
     ],
+  },
+  'Wrong turn': {
+    width: 12,
+    tiles: () => {
+      // the Rectangle, with a T junction on the right-hand side whose third arm is a dead end
+      const t = TILE_PRESETS.Rectangle.tiles();
+      const k = t.findIndex(x => x.type === 'straight' && x.c === 7 && x.r === 2);
+      t.splice(k, 1, { type: 'tee', rot: 3, c: 7, r: 2 }, { type: 'deadend', rot: 0, c: 8, r: 2 });
+      t.find(x => x.type === 'corner' && x.c === 0 && x.r === 1).tunnel = 1; // a short tunnel through a hill
+      return t;
+    },
   },
 };
