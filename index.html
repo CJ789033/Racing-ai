@@ -33,6 +33,7 @@
         <button id="bSensors" title="Show sensors">📡<small>Sensors</small></button>
         <button id="bPanels" title="Brain &amp; stats">🧠<small>Brain</small></button>
         <button id="bSettings" title="Settings">⚙️<small>AI</small></button>
+        <button id="bNews" class="newsBtn" title="What's new">📝<small>New</small></button>
       </div>
 
       <div id="panels" class="panels">
@@ -70,6 +71,7 @@
         <div class="tabs">
           <button id="tabTiles" class="tab active">🧩 Pieces</button>
           <button id="tabFree" class="tab">✏️ Freehand</button>
+          <button id="eNews" class="tab newsBtn" title="What's new">📝 What's new</button>
         </div>
         <div class="muted small tile-only help">Drag pieces &amp; obstacles onto the grid (on a phone you can also double-tap an empty square to place the selected piece) · tap a piece to edit it · rotate: tap it again, drag the ⟳ handle, or scroll over it · drag off the grid or back onto the parts to remove · drag empty grass to move the view, pinch or scroll to zoom · 🖌️ Paint: drag to lay road · Ctrl+C / Ctrl+V to copy &amp; paste.</div>
         <div class="muted small free-only help">Tap to add points · drag to move · yellow = start.</div>
@@ -128,6 +130,14 @@
     </div>
 
     <!-- In-game confirmation pop-up -->
+    <div id="news" class="modal hidden">
+      <div class="card dialog newsDialog">
+        <div class="cardTitle">📝 What's new</div>
+        <div id="newsBody" class="newsBody"></div>
+        <div class="dialogButtons"><button id="newsClose" class="primary">Got it</button></div>
+      </div>
+    </div>
+
     <div id="confirm" class="modal hidden">
       <div class="card dialog confirmDialog">
         <div class="cardTitle" id="cTitle"></div>

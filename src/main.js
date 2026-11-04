@@ -1,6 +1,7 @@
 import { Track, PRESETS, randomTrackPoints } from './sim/track.js';
 import { Evolution, DEFAULT_SETTINGS, DT, upgradeGenome } from './sim/evolution.js';
 import { POLICE_LEVELS } from './sim/police.js';
+import { CHANGELOG, LATEST_ID } from './changelog.js';
 import { Scene3D } from './render/scene3d.js';
 import { TrackEditor } from './ui/editor.js';
 import { TileEditor } from './ui/tileEditor.js';
@@ -494,6 +495,7 @@ function hintToast(id, msg) {
 let last = performance.now(), acc = 0, hudTimer = 0;
 function frame(now) {
   requestAnimationFrame(frame);
+if (newsUnseen()) openNews(); // came back after updates: show what changed since the last visit
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (state.mode !== 'race' || !state.evo) return;
@@ -551,8 +553,58 @@ function frame(now) {
   }
 }
 
+// ---------------------------------------------------------------- what's new
+const NEWS_KEY = 'racing-ai-news-seen';
+let newsSeen = LATEST_ID;
+function initNews(returning) {
+  let v = null;
+  try { v = localStorage.getItem(NEWS_KEY); } catch { /* storage blocked */ }
+  // first-ever visit: nothing to catch up on. Played before this list existed: everything is new to them
+  if (v !== null) newsSeen = Number(v) || 0;
+  else newsSeen = returning ? 0 : LATEST_ID;
+  if (v === null && !returning) markNewsSeen();
+  updateNewsBadge();
+}
+const newsUnseen = () => newsSeen < LATEST_ID;
+function markNewsSeen() {
+  newsSeen = LATEST_ID;
+  try { localStorage.setItem(NEWS_KEY, String(LATEST_ID)); } catch { /* storage blocked */ }
+  updateNewsBadge();
+}
+function updateNewsBadge() { for (const b of document.querySelectorAll('.newsBtn')) b.classList.toggle('unseen', newsUnseen()); }
+function openNews() {
+  const body = $('newsBody');
+  body.innerHTML = '';
+  const fresh = CHANGELOG.filter(c => c.id > newsSeen).reverse();
+  const older = CHANGELOG.filter(c => c.id <= newsSeen).reverse();
+  const fmt = d => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  const section = (title, list, isNew) => {
+    if (!list.length) return;
+    const h = document.createElement('div'); h.className = 'newsHead' + (isNew ? ' fresh' : ''); h.textContent = title; body.appendChild(h);
+    for (const c of list) {
+      const e = document.createElement('div'); e.className = 'newsEntry' + (isNew ? ' fresh' : '');
+      const t = document.createElement('div'); t.className = 'newsTitle';
+      t.innerHTML = `${isNew ? '<span class="newTag">NEW</span>' : ''}<b></b><span class="muted small"></span>`;
+      t.querySelector('b').textContent = c.title; t.querySelector('.muted').textContent = fmt(c.date);
+      const ul = document.createElement('ul');
+      for (const it of c.items) { const li = document.createElement('li'); li.textContent = it; ul.appendChild(li); }
+      e.append(t, ul); body.appendChild(e);
+    }
+  };
+  if (fresh.length) section(newsSeen ? `New since your last visit (${fresh.length} update${fresh.length > 1 ? 's' : ''})` : 'Everything added so far', fresh, true);
+  else { const p = document.createElement('p'); p.className = 'muted small'; p.textContent = 'You’re up to date – nothing new since your last visit.'; body.appendChild(p); }
+  section(fresh.length ? 'Earlier' : 'All updates', older, false);
+  $('news').classList.remove('hidden');
+  body.scrollTop = 0;
+}
+$('bNews').onclick = openNews;
+$('eNews').onclick = openNews;
+$('newsClose').onclick = () => { $('news').classList.add('hidden'); markNewsSeen(); };
+$('news').onclick = e => { if (e.target === $('news')) $('newsClose').onclick(); };
+
 // ---------------------------------------------------------------- boot
 const saved = load();
+initNews(!!saved);
 editor.setPoints(PRESETS.Kidney.points, PRESETS.Kidney.width);
 tileEditor.setTiles(TILE_PRESETS.Rectangle.tiles(), TILE_PRESETS.Rectangle.width);
 syncGridSelect();
