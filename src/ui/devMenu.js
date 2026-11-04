@@ -43,6 +43,9 @@ export class DevMenu {
     this.viz = viz;
     this.unlocked = false; // F1–F6 only work once the menu has been opened in this tab
     this._stepMs = 0; this._steps = 0; this.stepMs = 0;
+    this.focus = 0;          // F8: 0 = follow the leader, 1… = racer #n, then police
+    this.slowmo = false;     // F9
+    this.stepRequests = 0;   // F10
     this.seq = [];
     this.fps = 0; this._frames = 0; this._t0 = performance.now();
     this.simRate = 0;
@@ -59,7 +62,7 @@ export class DevMenu {
     this.help.className = 'devHelp hidden';
     document.body.appendChild(this.help);
     window.addEventListener('keydown', e => {
-      if (/^F[1-6]$/.test(e.key) && this.unlocked) { e.preventDefault(); this.key(e.key); return; }
+      if (/^F([1-9]|10)$/.test(e.key) && this.unlocked) { e.preventDefault(); this.key(e.key, e.shiftKey); return; }
       if (e.key === 'Escape' && this.open) { this.toggle(false); return; }
       const k = KEYS[e.key];
       if (k) this.push(k);
@@ -83,18 +86,44 @@ export class DevMenu {
 
   unlock() { this.unlocked = true; }
 
-  /** F1 = key help; F2–F6 = overlays */
-  key(k) {
+  /** F1 = key help; F2–F7 = overlays; F8 = follow car (Shift = back); F9 = slow motion; F10 = step */
+  key(k, shift = false) {
     this.unlock();
     if (k === 'F1') this.helpOn = !this.helpOn;
+    else if (k === 'F8') this.cycleFocus(shift ? -1 : 1);
+    else if (k === 'F9') this.slowmo = !this.slowmo;
+    else if (k === 'F10') this.stepRequests++;
     else if (this.viz) this.viz.toggle(k);
     this.renderHelp();
+  }
+
+  cycleFocus(d) {
+    const { state } = this.ctx(), evo = state.evo;
+    const n = evo ? evo.cars.length + evo.police.cars.length : 0;
+    this.focus = n ? (this.focus + d + n + 1) % (n + 1) : 0;
+  }
+
+  /** The car F8 is following (null = the leader). */
+  focusCar(evo) {
+    if (!this.focus || !evo) return null;
+    const i = this.focus - 1;
+    return i < evo.cars.length ? evo.cars[i] : evo.police.cars[i - evo.cars.length] || null;
+  }
+
+  focusName(evo) {
+    if (!this.focus || !evo) return 'leader';
+    const i = this.focus - 1;
+    return i < evo.cars.length ? `racer #${i + 1}` : `police ${i - evo.cars.length + 1}`;
   }
 
   renderHelp() {
     const on = this.viz ? this.viz.on : {};
     const lines = ['DEBUG KEYS  (↑ ↑ ↓ ← → = report)', 'F1  this help'];
-    for (const [k, desc] of Object.entries(OVERLAYS)) lines.push(`${k}  [${on[k] ? 'x' : ' '}] ${desc}`);
+    for (const [k, desc] of Object.entries(OVERLAYS)) lines.push(`${k.padEnd(3)} [${on[k] ? 'x' : ' '}] ${desc}`);
+    const { state } = this.ctx();
+    lines.push(`F8  follow: ${this.focusName(state.evo)}  (Shift+F8 = back; camera, sensors, brain panel and report follow it)`);
+    lines.push(`F9  [${this.slowmo ? 'x' : ' '}] slow motion (¼ speed)`);
+    lines.push(`F10 step: pause, then one physics step (1/60 s) per press`);
     this.help.textContent = lines.join('\n');
     this.help.classList.toggle('hidden', !this.helpOn);
   }
@@ -140,7 +169,8 @@ export class DevMenu {
         memoryMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1e6) : undefined,
       },
       app: { mode: state.mode, editor: state.editorKind, paused: !!state.paused, shadows: state.shadows, seeThrough: state.seeThrough, camera: scene.cameraMode,
-        overlays: this.viz ? Object.entries(this.viz.on).filter(([, v]) => v).map(([k]) => k).join(' ') || 'none' : undefined },
+        overlays: this.viz ? Object.entries(this.viz.on).filter(([, v]) => v).map(([k]) => k).join(' ') || 'none' : undefined,
+        following: this.focusName(state.evo), slowMotion: this.slowmo },
     };
     if (tileEditor) {
       const res = tileEditor.result || {};
@@ -181,9 +211,11 @@ export class DevMenu {
         settings: { pop: S.populationSize, hidden: S.hidden.join('-'), mutationRate: S.mutationRate, mutationStrength: S.mutationStrength, roadAhead: S.roadAhead, police: S.police },
         recentGenerations: evo.history.slice(-8).map(h => `g${h.generation}: ${h.bestLap ? r2(h.bestLap) + ' s' : Math.round(h.bestProgress * 100) + '%'} fin ${h.finishers}${h.busted ? ' bust ' + h.busted : ''}`),
       };
-      const leader = evo.leader();
+      const leader = this.focusCar(evo) || evo.leader();
       if (leader) {
         out.leader = {
+          car: this.focusName(evo) + (leader.isPolice ? ' (police)' : ''),
+          alive: leader.alive, killedBy: leader.killedBy || undefined,
           speedKmh: r1(leader.speed * 3.6), progress: r1(leader.maxProgress), lap: leader.lap, seg: leader.seg, lateral: r2(leader.lateral),
           distanceToFinish: tr ? r1(tr.D[leader.seg]) : undefined, speedLevel: leader.speedLevel, onOil: leader.onOil, inTunnel: leader.inTunnel, airborne: leader.airborne,
           outputs: { steer: r2(leader.steer), throttle: r2(leader.throttle) },
@@ -218,6 +250,15 @@ export class DevMenu {
       for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); store[k] = `${(localStorage.getItem(k) || '').length} chars`; }
     } catch { store.error = 'storage blocked'; }
     out.storage = { saveKey, keys: store };
+    if (this.viz && this.viz.deaths) {
+      // where cars went out (F7), grouped by reason and position along the lap
+      const byGen = {};
+      for (const d of this.viz.deaths) {
+        const key = `g${d.gen}`; (byGen[key] = byGen[key] || {});
+        const k = `${d.reason}@${d.pct}%`; byGen[key][k] = (byGen[key][k] || 0) + 1;
+      }
+      out.crashMap = byGen;
+    }
     out.errors = errors.length ? errors.slice() : 'none';
     return out;
   }

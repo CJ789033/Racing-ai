@@ -348,9 +348,10 @@ $('eGo').onclick = () => startRace();
 
 // ---------------------------------------------------------------- race UI
 $('bEdit').onclick = () => { loadDefIntoEditor(state.def); enterEditor(); };
+const syncPauseButton = () => { $('bPause').innerHTML = state.paused ? '▶️<small>Play</small>' : '⏸<small>Pause</small>'; };
 $('bPause').onclick = () => {
   state.paused = !state.paused;
-  $('bPause').innerHTML = state.paused ? '▶️<small>Play</small>' : '⏸<small>Pause</small>';
+  syncPauseButton();
 };
 $('bSpeed').onclick = () => {
   state.speedIdx = (state.speedIdx + 1) % SPEEDS.length;
@@ -520,10 +521,16 @@ function frame(now) {
   devMenu.tick(simSteps * DT, simMs, simSteps); simSteps = 0; simMs = 0;
   if (state.mode !== 'race' || !state.evo) return;
   const evo = state.evo;
+  // F10 (developer tools): pause, then advance exactly one physics step per press
+  if (devMenu.stepRequests > 0) {
+    if (!state.paused) { state.paused = true; syncPauseButton(); }
+    while (devMenu.stepRequests > 0) { devMenu.stepRequests--; evo.step(); simSteps++; }
+  }
 
   if (!state.paused) {
     const tSim = performance.now();
-    const speed = SPEEDS[state.speedIdx];
+    // F9 slow motion (developer tools) runs at a quarter of the chosen speed
+    const speed = devMenu.slowmo && SPEEDS[state.speedIdx] !== 'MAX' ? SPEEDS[state.speedIdx] * 0.25 : SPEEDS[state.speedIdx];
     const prevGen = evo.generation, prevBest = evo.bestLap;
     if (speed === 'MAX') {
       const t0 = performance.now();
@@ -545,8 +552,9 @@ function frame(now) {
     }
   }
 
-  const leader = evo.leader();
-  if (debugViz.any || debugViz.builtFor) debugViz.update(evo, evo.time);
+  // F8 (developer tools) can follow any car instead of the leader
+  const leader = devMenu.focusCar(evo) || evo.leader();
+  if (devMenu.unlocked) debugViz.update(evo, evo.time, leader);
   scene.updateCars(evo.cars, leader, dt, evo.time, evo.police.cars);
 
   hudTimer -= dt;

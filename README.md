@@ -35,13 +35,17 @@ New players get a guided tour (`src/ui/tutorial.js`, steps in `src/main.js`): ea
 ### 🛠️ Developer menu
 Hidden: press **↑ ↑ ↓ ← →** (or swipe up, up, down, left, right on a touch screen). Shows the build (commit + build time, so you can tell whether the site has updated), device / GPU / FPS / simulation speed, editor and track diagnostics (roads with no way through or pointing both ways), the AI (generation, settings, why cars went out last generation), the leader's every brain input and output, each police car's state, local storage and captured script errors. It also lists every racer (state, progress, speed, lap), the time per simulation step, and the exact track definition (JSON) so a reported track can be loaded and reproduced. **[copy]** copies it all as text to paste into a bug report.
 
-Once the menu has been opened in a tab, **F1–F6** toggle visual debugging overlays (drawn on top of everything, through tunnels and bridges):
+Once the menu has been opened in a tab, **F1–F10** toggle visual debugging overlays (drawn on top of everything, through tunnels and bridges):
 - **F1** key help with what's on
 - **F2** movement – each car's heading (white), velocity (cyan racers / blue police) and sideways slide (orange)
 - **F3** police – line from each cop to its target (red), its steering aim (yellow +), arrest ring, numbered cops (match the menu), racer → nearest police (orange) and the leader's 70 m radar range
 - **F4** track – route arrows coloured by distance to the finish, junction branches (magenta), roads with no way through (grey), start / finish, police grid spots, tunnels
 - **F5** sensors – every racer's distance rays (red = close) and the leader's road-ahead points
 - **F6** hidden – the trainee police and obstacle hit areas
+- **F7** crash map – a cross where every racer went out this and last generation, coloured by reason (off road red, busted blue, stopped grey, wrong way yellow, obstacle magenta); the menu groups them by reason and position along the lap
+- **F8** follow a car – cycles leader → racer #1…#n → police 1…n (Shift+F8 back); the camera, sensors, brain panel and the report's car section follow it
+- **F9** slow motion (¼ speed)
+- **F10** step – pauses, then advances exactly one physics step (1/60 s) per press
 
 For automated tests: `window.__dev.unlock()`, `__dev.key('F3')`, `__dev.report()`. Code: `src/ui/devMenu.js`, `src/render/debugViz.js`.
 

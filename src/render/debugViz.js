@@ -2,7 +2,7 @@
 // Everything is drawn as plain coloured lines on top of the scene (no depth test), so
 // it shows through tunnels and bridges.
 import * as THREE from 'three';
-import { RAY_ANGLES, RAY_LENGTH, LOOKAHEAD } from '../sim/car.js';
+import { Car, RAY_ANGLES, RAY_LENGTH, LOOKAHEAD } from '../sim/car.js';
 import { hammerLat, spinnerBar, laserOn } from '../sim/obstacles.js';
 
 export const OVERLAYS = {
@@ -11,7 +11,9 @@ export const OVERLAYS = {
   F4: 'track: route arrows by distance to finish (green → red), junction branches (magenta), no-way roads (grey), start / finish, police grid, tunnels (purple)',
   F5: 'sensors: every racer\'s distance rays (red = something close), leader\'s road-ahead points (yellow)',
   F6: 'hidden: trainee police (purple), obstacle hit areas (white)',
+  F7: 'crash map: where cars went out this + last generation – off road (red), busted (blue), stopped (grey), wrong way (yellow), obstacle (magenta)',
 };
+const DEATH_COLORS = { offroad: [1, 0.2, 0.25], landing: [1, 0.2, 0.25], busted: [0.35, 0.5, 1], stopped: [0.6, 0.6, 0.65], wrongway: [1, 0.9, 0.2] };
 const MAX_SEGS = 40000;
 const C = {
   white: [1, 1, 1], cyan: [0.2, 0.9, 1], blue: [0.35, 0.5, 1], orange: [1, 0.6, 0.1], red: [1, 0.2, 0.25],
@@ -21,7 +23,18 @@ const C = {
 export class DebugViz {
   constructor(scene3d) {
     this.s3 = scene3d;
-    this.on = { F2: false, F3: false, F4: false, F5: false, F6: false };
+    this.on = { F2: false, F3: false, F4: false, F5: false, F6: false, F7: false };
+    // crash map: record every racer's exit (hooking Car.die catches them even at MAX speed)
+    this.deaths = [];
+    const viz = this, origDie = Car.prototype.die;
+    Car.prototype.die = function (reason) {
+      origDie.call(this, reason);
+      if (this.isPolice || !viz.evo) return;
+      const tr = viz.evo.track;
+      viz.deaths.push({ x: this.x, z: this.z, h: this.roadH, reason, gen: viz.evo.generation,
+        pct: tr ? Math.round(Math.max(0, tr.lapLength - tr.D[this.seg]) / tr.lapLength * 10) * 10 : 0 });
+      if (viz.deaths.length > 4000) viz.deaths.splice(0, 1000);
+    };
     const mk = (n, opacity) => {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 6), 3).setUsage(THREE.DynamicDrawUsage));
@@ -98,13 +111,15 @@ export class DebugViz {
     this.builtFor = tr; this.dirtyTrack = false;
   }
 
-  update(evo, simTime) {
+  update(evo, simTime, focus = null) {
+    this.evo = evo;
     const tr = evo && evo.track;
+    if (evo) this.deaths = this.deaths.filter(d => d.gen >= evo.generation - 1); // this + last generation
     if (this.dirtyTrack || this.builtFor !== tr) this.buildTrack(tr, evo && evo.police);
     this.begin(this.dyn);
     if (evo && tr && this.any) {
       const racers = evo.cars, police = evo.police ? evo.police.cars : [], ghosts = evo.police ? evo.police.ghosts : [];
-      const leader = evo.leader();
+      const leader = focus || evo.leader();
       const y = c => c.roadH + (c.y || 0) + 1.4;
       if (this.on.F2) for (const c of [...racers, ...police]) {
         if (!c.alive) continue;
@@ -144,6 +159,10 @@ export class DebugViz {
             this.seg(c.x, Y, c.z, tr.cx[idx], tr.ch[idx] + 1.2, tr.cz[idx], C.yellow);
           }
         }
+      }
+      if (this.on.F7) for (const d of this.deaths) {
+        const col = DEATH_COLORS[d.reason] || [1, 0.2, 0.9], Y = d.h + 1.5, r = d.gen === evo.generation ? 2.4 : 1.5;
+        this.seg(d.x - r, Y, d.z - r, d.x + r, Y, d.z + r, col); this.seg(d.x - r, Y, d.z + r, d.x + r, Y, d.z - r, col);
       }
       if (this.on.F6) {
         for (const g of ghosts) {
