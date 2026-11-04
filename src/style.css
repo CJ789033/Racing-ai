@@ -97,6 +97,11 @@ input[type=range] { width: 130px; accent-color: #ff8a1f; }
 .dialog input[type=range] { width: 100%; }
 .dialog input[type=text] { font: inherit; color: inherit; background: #262b33; border: 1px solid #3a414c; border-radius: 6px; padding: 6px; }
 .dialogButtons { display: flex; justify-content: space-between; gap: 8px; }
+.dialogButtons button { flex-direction: row; font-size: 14px; padding: 9px 14px; }
+#confirm { z-index: 20; }
+.confirmDialog { width: min(340px, 100%); }
+.confirmDialog p { margin: 0; line-height: 1.45; color: #cfd6df; }
+#cYes.primary { background: #ff8a1f; border-color: #ffb066; color: #1a1205; }
 
 .toast { position: absolute; top: 18%; left: 50%; transform: translateX(-50%); background: rgba(255, 192, 46, 0.95); color: #1a1205;
   font-weight: 700; padding: 10px 18px; border-radius: 999px; font-size: 16px; pointer-events: none; transition: opacity 0.4s; }

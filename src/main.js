@@ -247,7 +247,10 @@ $('eAdd').onclick = () => setEditMode('add');
 $('eDel').onclick = () => setEditMode('delete');
 $('eReverse').onclick = () => editor.reverse();
 $('eStart').onclick = () => editor.rotateStart();
-$('eClear').onclick = () => editor.setPoints([]);
+$('eClear').onclick = async () => {
+  if (editor.points.length && !await askConfirm('Clear the track?', `This removes all ${editor.points.length} points.`, { ok: 'Clear' })) return;
+  editor.setPoints([]);
+};
 $('eWidth').oninput = e => activeEditor().setWidth(Number(e.target.value));
 $('tabTiles').onclick = () => setEditorKind('tiles');
 $('tabFree').onclick = () => setEditorKind('spline');
@@ -261,7 +264,11 @@ function setTileMode(mode) {
 $('tDel').onclick = () => setTileMode(tileEditor.mode === 'delete' ? 'place' : 'delete');
 $('tSel').onclick = () => setTileMode(tileEditor.mode === 'select' ? 'place' : 'select');
 tileEditor.onExitSelect = () => setTileMode('place');
-$('tClear').onclick = () => tileEditor.setTiles([]);
+$('tClear').onclick = async () => {
+  const n = tileEditor.tiles.length;
+  if (n && !await askConfirm('Clear the track?', `This removes all ${n} piece${n > 1 ? 's' : ''} (and their obstacles).`, { ok: 'Clear' })) return;
+  tileEditor.setTiles([]);
+};
 
 // Laps for freehand tracks (piece tracks set them on the Start piece)
 for (let i = 1; i <= 10; i++) { const o = document.createElement('option'); o.value = i; o.textContent = i; $('eLaps').appendChild(o); }
@@ -279,10 +286,12 @@ function syncGridSelect() {
   }
   gridSel.value = `${COLS}x${ROWS}`;
 }
-gridSel.onchange = () => {
+gridSel.onchange = async () => {
   const [c, r] = gridSel.value.split('x').map(Number);
-  tileEditor.setGridSize(c, r);
-  syncGridSelect(); // reverts the menu if the change was cancelled
+  const lost = tileEditor.countLost(c, r);
+  if (lost && !await askConfirm('Shrink the grid?', `${lost} piece${lost > 1 ? 's' : ''} won't fit on the smaller grid and will be removed.`, { ok: 'Shrink' })) { syncGridSelect(); return; }
+  tileEditor.setGridSize(c, r, { force: true });
+  syncGridSelect();
 };
 
 /** Presets are designed on the default grid: centre them on the current one (or switch back if too small). */
@@ -320,13 +329,45 @@ $('bSensors').classList.add('active');
 $('bPanels').onclick = () => $('panels').classList.toggle('hidden');
 $('bPanels').classList.add('active');
 
+// In-game confirmation pop-up (instead of the browser's own dialogs)
+function askConfirm(title, message, { ok = 'OK', danger = true } = {}) {
+  return new Promise(resolve => {
+    const box = $('confirm');
+    $('cTitle').textContent = title; $('cMsg').textContent = message;
+    const yes = $('cYes'), no = $('cNo');
+    yes.textContent = ok; yes.className = danger ? 'danger' : 'primary';
+    const done = v => { box.classList.add('hidden'); window.removeEventListener('keydown', key); resolve(v); };
+    const key = e => { if (e.key === 'Escape') done(false); else if (e.key === 'Enter') done(true); };
+    yes.onclick = () => done(true); no.onclick = () => done(false);
+    box.onclick = e => { if (e.target === box) done(false); };
+    window.addEventListener('keydown', key);
+    box.classList.remove('hidden');
+  });
+}
+
+const BRAIN_SIZES = [
+  { label: 'Very low', hidden: [6] },
+  { label: 'Normal', hidden: [12, 8] },
+  { label: 'Medium', hidden: [16, 12] },
+  { label: 'High', hidden: [24, 16] },
+];
+
 // Settings dialog
 function syncSettingsUI() {
   const s = state.evo ? state.evo.settings : state.settings;
   $('iPop').value = state.settings.populationSize; $('vPop').textContent = state.settings.populationSize;
   $('iRate').value = s.mutationRate; $('vRate').textContent = s.mutationRate.toFixed(2);
   $('iStr').value = s.mutationStrength; $('vStr').textContent = s.mutationStrength.toFixed(2);
-  $('iHidden').value = state.settings.hidden.join(',');
+  const brain = $('iBrain'); brain.innerHTML = '';
+  for (const b of BRAIN_SIZES) {
+    const btn = document.createElement('button');
+    btn.textContent = b.label;
+    btn.classList.toggle('active', b.hidden.join() === state.settings.hidden.join());
+    btn.onclick = () => { state.settings.hidden = b.hidden.slice(); syncSettingsUI(); };
+    brain.appendChild(btn);
+  }
+  $('iBrainInfo').textContent = `${state.settings.hidden.join(' → ')} thinking neurons. Bigger can learn trickier driving but takes longer to train.`;
+  $('iRoadAhead').checked = state.settings.roadAhead !== false;
   $('iShadows').checked = state.shadows;
   $('iSeeThrough').checked = state.seeThrough;
 }
@@ -342,11 +383,7 @@ $('iStr').oninput = e => {
   if (state.evo) state.evo.settings.mutationStrength = state.settings.mutationStrength;
   syncSettingsUI();
 };
-$('iHidden').onchange = e => {
-  const layers = e.target.value.split(/[,\s]+/).map(Number).filter(n => n > 0 && n <= 64).slice(0, 4);
-  if (layers.length) state.settings.hidden = layers;
-  syncSettingsUI();
-};
+$('iRoadAhead').onchange = e => { state.settings.roadAhead = e.target.checked; };
 $('iShadows').onchange = e => {
   state.shadows = e.target.checked;
   scene.renderer.shadowMap.enabled = state.shadows;
@@ -358,18 +395,18 @@ $('iSeeThrough').onchange = e => {
   scene.setTunnelSeeThrough(state.seeThrough);
   save();
 };
-$('sReset').onclick = () => {
-  if (!confirm('Reset the AI? All learning will be lost.')) return;
+$('sReset').onclick = async () => {
+  if (!await askConfirm('Reset the AI?', 'All learning on this track will be lost and evolution starts again from random brains.', { ok: 'Reset AI' })) return;
   $('settings').classList.add('hidden');
   startRace({ reset: true });
 };
-$('sClose').onclick = () => {
+$('sClose').onclick = async () => {
   $('settings').classList.add('hidden');
   // Structural changes need a reset; offer it
   const evo = state.evo;
   const structural = evo && (evo.settings.populationSize !== state.settings.populationSize ||
-    evo.settings.hidden.join() !== state.settings.hidden.join());
-  if (structural && confirm('Population / network size changed. Restart evolution with the new settings?')) {
+    evo.settings.hidden.join() !== state.settings.hidden.join() || (evo.settings.roadAhead !== false) !== (state.settings.roadAhead !== false));
+  if (structural && await askConfirm('Restart evolution?', 'You changed the population, brain size or road-ahead sense. These only take effect when evolution restarts.', { ok: 'Restart', danger: false })) {
     const keepBrain = evo.settings.hidden.join() === state.settings.hidden.join();
     const seed = keepBrain ? evo.bestGenome : null;
     state.evo = new Evolution(state.track, state.settings, seed);

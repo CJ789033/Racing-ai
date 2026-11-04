@@ -28,7 +28,7 @@ export const OUTPUT_SIZE = 2; // steer, throttle/brake
 
 const GRAVITY = 9.81;
 const STOP_SPEED = 2;      // m/s – slower than this counts as "stopped"
-const STOP_TIME = 2;       // seconds stopped -> eliminated
+const STOP_TIME = 1.2;     // seconds stopped -> eliminated
 const NO_PROGRESS_TIME = 10; // seconds without a new best distance -> eliminated
 // Speed levels from pads: each level up = +25 % top speed & power, each level down = −18 %
 export const SPEED_UP_STEP = 0.25, SPEED_DOWN_STEP = 0.18;
@@ -36,9 +36,11 @@ const PAD_KICK = 3;        // m/s instant push per strength point of a speed pad
 const PAD_BRAKE = 0.12;    // instant speed loss per strength point of a slow pad
 
 export class Car {
-  constructor(brain, track) {
+  /** opts.roadAhead: give the car the "road ahead" sense (directions to points further along the route) */
+  constructor(brain, track, opts = {}) {
     this.brain = brain;
     this.track = track;
+    this.roadAhead = opts.roadAhead !== false;
     this.inputs = new Float32Array(INPUT_SIZE);
     this.rays = new Float32Array(RAY_ANGLES.length);
     this.reset();
@@ -64,6 +66,7 @@ export class Car {
     this.padFlash = 0;
     this.lastProgressTime = 0;
     this.stoppedTime = 0;
+    this.everMoved = false;
     this.time = 0;
     this.distance = 0;
     this.alive = true;
@@ -110,8 +113,10 @@ export class Car {
     inp[k++] = clamp(this.lateral / tr.halfWidth, -1.5, 1.5);
     // Where is the road going? Angle from the car's heading to road points
     // further along the best route (like a driver looking through the corner).
+    // (Off = the car only has its distance sensors, like a real "learn from nothing" driver.)
     let idx = this.seg, walked = 0;
     for (const ahead of LOOKAHEAD) {
+      if (!this.roadAhead) { inp[k++] = 0; continue; }
       while (walked < ahead) { const n = tr.next[idx]; if (n === idx) break; idx = n; walked += tr.step; }
       const ang = Math.atan2(tr.cz[idx] - this.z, tr.cx[idx] - this.x);
       inp[k++] = clamp(angleDiff(ang, h) / (Math.PI / 2), -1, 1);
@@ -279,7 +284,10 @@ export class Car {
       }
     }
     // cars that just sit there are removed quickly (and score lower than crashing)
-    if (!this.airborne && Math.abs(this.speed) < STOP_SPEED && this.time > 1.5) this.stoppedTime += this.dt;
+    if (this.speed > 2 * STOP_SPEED) this.everMoved = true;
+    // a car that has been driving and stops is removed quickly; one that never
+    // pulls away gets a few seconds at the start (new brains are timid)
+    if (!this.airborne && Math.abs(this.speed) < STOP_SPEED && (this.everMoved || this.time > 3)) this.stoppedTime += this.dt;
     else this.stoppedTime = 0;
     if (this.finished) { if (this.stoppedTime > STOP_TIME) this.die('parked'); return; }
     if (this.stoppedTime > STOP_TIME) this.die('stopped');

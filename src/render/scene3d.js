@@ -553,6 +553,20 @@ export class Scene3D {
     for (let i = 0; i < n; i++) this.bodies.setColorAt(i, COL_ALIVE);
     this.bodies.frustumCulled = this.darks.frustumCulled = false;
     this.scene.add(this.bodies, this.darks);
+    // 💥 / 💤 markers above cars that just went out
+    if (this.icons) for (const ic of this.icons) this.scene.remove(ic);
+    const emoji = ch => {
+      const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+      const x = cv.getContext('2d'); x.font = '52px system-ui'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(ch, 32, 36);
+      return new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthTest: false });
+    };
+    this.iconMats = this.iconMats || { crash: emoji('💥'), stop: emoji('💤') };
+    this.icons = Array.from({ length: n }, () => {
+      const sp = new THREE.Sprite(this.iconMats.crash.clone()); sp.scale.set(4, 4, 1); sp.visible = false; sp.renderOrder = 12;
+      sp.userData.mats = { crash: sp.material, stop: this.iconMats.stop.clone() }; // own materials: each fades on its own
+      this.scene.add(sp); return sp;
+    });
+
     // Exhaust flames for cars with a raised speed level (speed pads)
     if (this.flames) { this.scene.remove(this.flames); this.flames.dispose(); }
     const flameGeo = new THREE.ConeGeometry(0.5, 2.4, 10); flameGeo.rotateZ(Math.PI / 2); flameGeo.translate(-1.2, 0, 0); // base at the origin, tip backwards
@@ -591,10 +605,25 @@ export class Scene3D {
     const m = this._m, q = this._q, v = this._v;
     const OL = this.outlineLocal, OP = this.outlinePos, OC = this.outlineCol, per = OL.length;
     cars.forEach((c, i) => {
-      // Dead cars sink, turn grey and vanish after a moment; jumping cars fly
-      const gone = !c.alive && simTime - c.diedAt > 1.5;
-      v.set(c.x, c.alive ? c.roadH + c.y : c.roadH - 0.25, c.z);
-      q.setFromAxisAngle(this._up, -c.heading);
+      // Crashed cars slide and spin out, then vanish; jumping cars fly
+      const since = c.alive ? 0 : simTime - c.diedAt;
+      const gone = !c.alive && since > 1.5;
+      let heading = c.heading;
+      if (!c.alive && c.crashed) {
+        const f = (1 - Math.exp(-3 * since)) / 3;     // distance slid (decaying)
+        v.set(c.x + c.vx * f, c.roadH + Math.max(0, c.y), c.z + c.vz * f);
+        heading += (c.slip >= 0 ? 1 : -1) * 2.2 * (1 - Math.exp(-3 * since));
+      } else v.set(c.x, c.alive ? c.roadH + c.y : c.roadH, c.z);
+      q.setFromAxisAngle(this._up, -heading);
+      const icon = this.icons && this.icons[i];
+      if (icon) {
+        icon.visible = !c.alive && !gone && !c.finished;
+        if (icon.visible) {
+          icon.material = c.crashed ? icon.userData.mats.crash : icon.userData.mats.stop;
+          icon.position.set(v.x, v.y + 3.5 + since * 1.5, v.z);
+          icon.material.opacity = Math.max(0, 1 - since / 1.5);
+        }
+      }
       this._s.setScalar(gone ? 0 : 1);
       if (c.airborne) {
         // nose follows the flight path

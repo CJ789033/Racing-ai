@@ -420,6 +420,16 @@ export class TileEditor {
    * up off the grid are removed (after asking, unless `force`).
    * Returns false if the player cancelled.
    */
+  /** How many pieces would fall off if the grid changed to cols x rows? */
+  countLost(cols, rows) {
+    const prev = { cols: COLS, rows: ROWS };
+    const dc = Math.floor((cols - COLS) / 2), dr = Math.floor((rows - ROWS) / 2);
+    setGridSize(cols, rows);
+    const lost = shiftTiles(this.tiles, dc, dr).filter(t => !fitsGrid(t)).length;
+    setGridSize(prev.cols, prev.rows);
+    return lost;
+  }
+
   setGridSize(cols, rows, { recenter = true, force = false } = {}) {
     if (cols === COLS && rows === ROWS) return true;
     const dc = recenter ? Math.floor((cols - COLS) / 2) : 0, dr = recenter ? Math.floor((rows - ROWS) / 2) : 0;
@@ -428,10 +438,7 @@ export class TileEditor {
     const moved = shiftTiles(this.tiles, dc, dr);
     const keep = moved.filter(fitsGrid);
     const lost = moved.length - keep.length;
-    if (lost && !force && !confirm(`${lost} piece${lost > 1 ? 's' : ''} won't fit on the smaller grid and will be removed. Continue?`)) {
-      setGridSize(prev.cols, prev.rows);
-      return false;
-    }
+    if (lost && !force) { setGridSize(prev.cols, prev.rows); return false; } // caller asks the player first
     this.tiles = keep;
     this.selected = null;
     this.resize();
@@ -579,17 +586,23 @@ export class TileEditor {
     for (let r = 0; r <= ROWS; r++) { ctx.beginPath(); ctx.moveTo(ox, oy + r * s); ctx.lineTo(ox + COLS * s, oy + r * s); ctx.stroke(); }
 
     const inNet = new Set(this.result.order || []);
-    // ground pieces first, bridges on top
-    const ordered = [...this.tiles].sort((a, b) => (a.type === 'bridge') - (b.type === 'bridge'));
-    for (const t of ordered) {
+    const alphaOf = t => (!this.result.ok || inNet.has(t) ? 1 : 0.5);
+    for (const t of this.tiles) {
       const g = pieceGeometry(t);
       if (this.result.ok && inNet.has(t) && t.type !== 'bridge') { ctx.fillStyle = 'rgba(56,224,123,0.10)'; ctx.fillRect(ox + t.c * s, oy + t.r * s, g.w * s, g.h * s); }
-      const a = !this.result.ok || inNet.has(t) ? 1 : 0.5;
-      drawTile(ctx, t, map, k, this.width, a, this.isReversed(t));
-      drawObstacle(ctx, t, map, k, this.width, this.isReversed(t), a, Math.max(16 * this.dpr, s * 0.38));
-      if (this.mode === 'delete') {
-        ctx.strokeStyle = 'rgba(255,59,92,0.8)'; ctx.lineWidth = 2 * this.dpr;
-        ctx.strokeRect(ox + t.c * s + 2, oy + t.r * s + 2, g.w * s - 4, g.h * s - 4);
+    }
+    // ground pieces first, bridges on top; within each layer all borders, then all tarmac, then details
+    for (const group of [this.tiles.filter(t => t.type !== 'bridge'), this.tiles.filter(t => t.type === 'bridge')]) {
+      for (const pass of ['shadow', 'border', 'asphalt', 'detail']) {
+        for (const t of group) drawTile(ctx, t, map, k, this.width, alphaOf(t), this.isReversed(t), pass);
+      }
+      for (const t of group) {
+        drawObstacle(ctx, t, map, k, this.width, this.isReversed(t), alphaOf(t), Math.max(16 * this.dpr, s * 0.38));
+        if (this.mode === 'delete') {
+          const g = pieceGeometry(t);
+          ctx.strokeStyle = 'rgba(255,59,92,0.8)'; ctx.lineWidth = 2 * this.dpr;
+          ctx.strokeRect(ox + t.c * s + 2, oy + t.r * s + 2, g.w * s - 4, g.h * s - 4);
+        }
       }
     }
     if (this.selected) {
@@ -714,25 +727,33 @@ function label(ctx, text, x, y, dpr, color) {
 }
 
 /** Draw a piece's roads. `map` turns world metres into canvas px; k = px per metre. */
-export function drawTile(ctx, tile, map, k, width, alpha = 1, rev = false) {
+/**
+ * Draw a piece's roads. `map` turns world metres into canvas px; k = px per metre.
+ * `pass` lets the grid draw all borders first and all tarmac on top, so joins
+ * between pieces are seamless: 'shadow' | 'border' | 'asphalt' | 'detail' | 'all'.
+ */
+export function drawTile(ctx, tile, map, k, width, alpha = 1, rev = false, pass = 'all') {
+  if (pass === 'all') { for (const p of ['shadow', 'border', 'asphalt', 'detail']) drawTile(ctx, tile, map, k, width, alpha, rev, p); return; }
   const g = pieceGeometry(tile);
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; // round ends overlap neighbours: no wedge gaps
   const path = (pts, shift = 0) => {
     ctx.beginPath();
     pts.forEach((p, i) => { const [x, y] = map(p); i ? ctx.lineTo(x + shift, y + shift) : ctx.moveTo(x + shift, y + shift); });
   };
   const bridge = tile.type === 'bridge';
-  if (bridge) {
+  if (pass === 'shadow' && bridge) {
     // drop shadow under the raised deck
     for (const e of g.edges) {
       const raised = e.points.filter(p => p.h > 1);
       if (raised.length > 1) { path(raised, 0.5 * k * 4); ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = (width + 3) * k; ctx.stroke(); }
     }
   }
-  for (const e of g.edges) { path(e.points); ctx.strokeStyle = bridge ? '#cbd5e1' : '#e8e8e8'; ctx.lineWidth = (width + (bridge ? 3.4 : 2.4)) * k; ctx.stroke(); }
-  for (const e of g.edges) { path(e.points); ctx.strokeStyle = bridge ? '#4b5058' : '#3b3f45'; ctx.lineWidth = width * k; ctx.stroke(); }
+  if (pass === 'border') for (const e of g.edges) { path(e.points); ctx.strokeStyle = bridge ? '#cbd5e1' : '#e8e8e8'; ctx.lineWidth = (width + (bridge ? 3.4 : 2.4)) * k; ctx.stroke(); }
+  if (pass === 'asphalt') for (const e of g.edges) { path(e.points); ctx.strokeStyle = bridge ? '#4b5058' : '#3b3f45'; ctx.lineWidth = width * k; ctx.stroke(); }
+  if (pass !== 'detail') { ctx.restore(); return; }
+  ctx.lineCap = 'butt';
   if (!g.junction) {
     for (const e of g.edges) {
       path(e.points); ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = Math.max(1, 0.4 * k);

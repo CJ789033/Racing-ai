@@ -118,6 +118,26 @@ export class Track {
       nodeEnds[this.edgeA[e]].push(this.edgeStart[e]);
       nodeEnds[this.edgeB[e]].push(this.edgeStart[e] + this.edgeCount[e] - 1);
     }
+    // Where exactly two roads meet (a plain join between pieces), give both end
+    // samples the same direction so the road edges line up – otherwise the
+    // chord of a curve's last segment leaves a thin wedge-shaped gap.
+    const sI0 = this.edgeStart[net.aheadEdge], fI0 = this.edgeStart[net.behindEdge] + this.edgeCount[net.behindEdge] - 1;
+    const joins = nodeEnds.filter(l => l.length === 2);
+    joins.push([fI0, sI0]); // the start line joins the two halves of the start road
+    const isStart = i => i === this.edgeStart[this.edgeOf[i]];
+    for (const [i, j] of joins) {
+      // direction travelling i -> node -> j
+      const si = isStart(i) ? -1 : 1, sj = isStart(j) ? 1 : -1;
+      let dx = this.tx[i] * si + this.tx[j] * sj, dz = this.tz[i] * si + this.tz[j] * sj;
+      const L = Math.hypot(dx, dz);
+      if (L < 1e-3) continue;
+      dx /= L; dz /= L;
+      for (const [p, sg] of [[i, si], [j, sj]]) {
+        this.tx[p] = dx * sg; this.tz[p] = dz * sg; this.nx[p] = -this.tz[p]; this.nz[p] = this.tx[p];
+        this.lx[p] = this.cx[p] + this.nx[p] * hw; this.lz[p] = this.cz[p] + this.nz[p] * hw;
+        this.rx[p] = this.cx[p] - this.nx[p] * hw; this.rz[p] = this.cz[p] - this.nz[p] * hw;
+      }
+    }
     const nb = Array.from({ length: N }, () => []);
     for (let e = 0; e < E; e++) {
       const s = this.edgeStart[e], n = this.edgeCount[e];

@@ -17,13 +17,14 @@ export class NeuralNet {
     return s;
   }
 
-  static randomGenome(layers) {
+  /** @param scale how strong the random starting connections are (1.5 = bold, ~0.3 = timid) */
+  static randomGenome(layers, scale0 = 1.5) {
     const g = new Float32Array(NeuralNet.genomeSize(layers));
     let o = 0;
     for (let l = 1; l < layers.length; l++) {
       const fanIn = layers[l - 1] + 1;
       const scale = 1 / Math.sqrt(fanIn);
-      for (let k = 0; k < layers[l] * fanIn; k++) g[o++] = gaussian() * scale * 1.5;
+      for (let k = 0; k < layers[l] * fanIn; k++) g[o++] = gaussian() * scale * scale0;
     }
     return g;
   }

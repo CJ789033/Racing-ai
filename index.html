@@ -105,13 +105,26 @@
         <label>Population <b id="vPop"></b><input id="iPop" type="range" min="10" max="150" step="5" /></label>
         <label>Mutation rate <b id="vRate"></b><input id="iRate" type="range" min="0.01" max="0.4" step="0.01" /></label>
         <label>Mutation strength <b id="vStr"></b><input id="iStr" type="range" min="0.05" max="1.5" step="0.05" /></label>
-        <label>Hidden layers <input id="iHidden" type="text" placeholder="12,8" /></label>
+        <div class="propRow"><div class="propLabel">Brain size (hidden layers)</div><div class="seg" id="iBrain"></div><div class="muted small" id="iBrainInfo"></div></div>
+        <label class="check"><input id="iRoadAhead" type="checkbox" /> Road-ahead sense – cars can tell which way the road goes (learns faster). Off = distance sensors only.</label>
         <label class="check"><input id="iShadows" type="checkbox" /> Shadows (slower on phones)</label>
         <label class="check"><input id="iSeeThrough" type="checkbox" /> See-through ground over tunnels</label>
-        <p class="muted small">Population size and hidden layers take effect when the AI is reset. Mutation applies immediately.</p>
+        <p class="muted small">Population, brain size and road-ahead sense restart the evolution. Mutation applies immediately.</p>
         <div class="dialogButtons">
           <button id="sReset" class="danger">Reset AI (forget everything)</button>
           <button id="sClose" class="primary">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- In-game confirmation pop-up -->
+    <div id="confirm" class="modal hidden">
+      <div class="card dialog confirmDialog">
+        <div class="cardTitle" id="cTitle"></div>
+        <p id="cMsg" class="small"></p>
+        <div class="dialogButtons">
+          <button id="cNo">Cancel</button>
+          <button id="cYes" class="danger">OK</button>
         </div>
       </div>
     </div>

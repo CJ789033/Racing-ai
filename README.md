@@ -39,7 +39,7 @@ closing the app.
 - **Track** – back to the editor. **Pause**, **speed** (1×–25×, MAX = as fast as the device can go)
 - **Camera** – Orbit (drag/pinch), Follow the leader, Top-down
 - **Sensors** – show the leader's rays. **Brain** – live network activations + progress/lap-time chart
-- **AI** – population size, mutation rate/strength, hidden layers, shadows
+- **AI** – population size, mutation rate/strength, brain size (Very low / Normal / Medium / High), road-ahead sense on/off, shadows, see-through tunnels
 
 Car colours: 🟡 leader · 🟣 elite (unchanged from last gen) · 🔵 racing · 🟢 finished · ⚫ out
 

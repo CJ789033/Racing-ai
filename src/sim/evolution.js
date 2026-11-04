@@ -9,6 +9,8 @@ export const DEFAULT_SETTINGS = {
   elites: 3,              // minimum number of unchanged survivors
   eliteFraction: 0.1,     // ...or this share of the population, whichever is larger
   crossoverRate: 0.3,
+  initScale: 0.4,         // new brains start timid, so skill has to be learned rather than lucked into
+  roadAhead: true,        // cars sense which way the road goes ahead
   fineTuneShare: 0.6,     // share of children that only get tiny mutations
   fineTuneScale: 0.12,
   mutationRate: 0.08,     // chance each weight is mutated
@@ -40,7 +42,7 @@ export class Evolution {
         genomes.push(g);
       } else genomes.push(null);
     }
-    this.cars = genomes.map(g => new Car(new NeuralNet(this.layers, g), track));
+    this.cars = genomes.map(g => new Car(new NeuralNet(this.layers, g || NeuralNet.randomGenome(this.layers, this.settings.initScale)), track, { roadAhead: this.settings.roadAhead }));
   }
 
   /** Cars still trying to finish their lap (finished cars drive on for show). */
