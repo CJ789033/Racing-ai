@@ -52,6 +52,7 @@ export class TileEditor {
     window.addEventListener('pointercancel', e => {
       this.pointers.delete(e.pointerId);
       this.drag = null; this.press = null; this.panDrag = null; this.emptyPress = null;
+      this.setPaletteDropState(false);
       if (this.pointers.size < 2) this.pinch = null;
       this.draw();
     });
@@ -223,6 +224,14 @@ export class TileEditor {
   }
 
   // ------------------------------------------------------------ input
+  /** Is the pointer over the palette (the part selector)? Dropping grid pieces there deletes them. */
+  overPalette(x, y) {
+    const pr = this.palette.getBoundingClientRect();
+    return pr.width > 0 && x >= pr.left && x <= pr.right && y >= pr.top && y <= pr.bottom;
+  }
+
+  setPaletteDropState(on) { this.palette.classList.toggle('dropDelete', !!on); }
+
   startDrag(d, e) {
     this.drag = { ...d, x: e.clientX, y: e.clientY };
     this.draw();
@@ -273,7 +282,7 @@ export class TileEditor {
     if (this.pointers.size === 2) {
       // second finger: pinch to zoom / two-finger pan; cancel whatever the first finger started
       this.press = null; this.drag = null; this.box = null; this.rotDrag = null; this.emptyPress = null; this.panDrag = null;
-      this.pendingDelete = null;
+      this.pendingDelete = null; this.setPaletteDropState(false);
       if (this.paint) {
         // the first finger had started painting – that was the start of a pinch, so undo the stroke
         this.tiles = this.paint.before; this.paint = null;
@@ -396,6 +405,7 @@ export class TileEditor {
     }
     if (!this.drag) return;
     this.drag.x = e.clientX; this.drag.y = e.clientY;
+    this.setPaletteDropState((this.drag.fromGrid || this.drag.kind === 'group') && this.overPalette(e.clientX, e.clientY));
     this.draw();
   }
 
@@ -423,9 +433,11 @@ export class TileEditor {
       this.bulkChanged();
       return;
     }
+    this.setPaletteDropState(false);
     if (this.drag && this.drag.kind === 'group') {
       const d = this.drag, cell = this.cellAt(e.clientX, e.clientY);
       this.drag = null;
+      if (this.overPalette(e.clientX, e.clientY)) { this.deleteSelection(); return; } // dropped back on the part selector
       if (!cell) { this.onMessage('Drop the selection on the grid (use 🗑️ to delete it)'); this.draw(); return; }
       this.moveGroup(d.tiles, cell.c - d.from.c, cell.r - d.from.r, true);
       return;
@@ -447,6 +459,13 @@ export class TileEditor {
       const pr = this.palette.getBoundingClientRect();
       const overPalette = e.clientX >= pr.left && e.clientX <= pr.right && e.clientY >= pr.top && e.clientY <= pr.bottom;
       if (!moved || overPalette) { this.draw(); return; }
+    }
+    if (d.fromGrid && this.overPalette(e.clientX, e.clientY)) {
+      // dragged back onto the part selector: delete it (it was lifted off the grid when the drag began)
+      if (this.selected === d.tile) this.select(null);
+      this.onMessage('Piece deleted');
+      this.changed();
+      return;
     }
     const cell = this.cellAt(e.clientX, e.clientY);
     if (d.kind === 'obstacle') {

@@ -139,3 +139,7 @@ input[type=range] { width: 130px; accent-color: #ff8a1f; }
 .hintsRow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .hintsRow button { flex-direction: row; font-size: 14px; padding: 8px 12px; }
 .hintsRow button:disabled { opacity: 0.45; }
+/* dragging a grid piece over the part selector: drop to delete */
+.palette.dropDelete { outline: 2px solid #ff5a70; background: rgba(107, 31, 42, 0.92); }
+.palette.dropDelete::after { content: '🗑️ Drop to delete'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 15px; color: #fff; background: rgba(107, 31, 42, 0.72); pointer-events: none; border-radius: inherit; }
