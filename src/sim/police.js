@@ -17,7 +17,10 @@ export const POLICE_RADIUS = 1.6;    // how big a police car looks to the racers
 export const BUST_SPEED = 8;         // m/s – a cop must be driving at least this fast to bust anyone
 const IDLE_SPEED = 5;                // slower than this counts as sitting still
 const PATROL_SPEED = 12;             // m/s – cops never slow below this (no parking as a roadblock)
-export const HOLD_TIME = 2;          // s – the racers' head start before the police set off
+const TUNE = globalThis.__policeTune || {}; // (benchmarks only)
+export const HOLD_TIME = TUNE.hold ?? 3;          // s – the racers' head start before the police set off
+const CATCH_UP = TUNE.catchUp ?? 0.3;           // extra speed (fraction) when far behind the target
+export const ARREST_TIME = TUNE.arrest ?? 4;     // s a cop stops for after a bust (one racer at a time)
 const SEE_RACER = 160;               // how far police can "radio" the nearest racer
 const P_LOOK = [12, 35];
 // Inputs: rays + speed + lateral + road-ahead directions + nearest racer (angle, closeness, closing speed)
@@ -50,13 +53,14 @@ export class PoliceCar extends Car {
     this.pursuit = 0;     // time spent close to a racer (weighted by how close)
     this.wallTime = 0;    // time spent scraping the barriers
     this.idleTime = 0;    // time spent (nearly) standing still
+    this.arrestUntil = 0; // stopped making an arrest until this time
   }
 
-  // pursuit-tuned engine: 10 % faster than the racers close up, and up to 50 %
+  // pursuit-tuned engine: 10 % faster than the racers close up, and up to 40 %
   // when far behind its target (catch-up), so a racer can't simply outrun them
   get speedFactor() {
     const d = this.targetDist ?? 1e9;
-    const catchUp = d > 1e8 ? 0.2 : Math.max(0, Math.min(1, (d - 25) / 100)) * 0.4;
+    const catchUp = d > 1e8 ? CATCH_UP / 2 : Math.max(0, Math.min(1, (d - 25) / 100)) * CATCH_UP;
     return super.speedFactor * (1.1 + catchUp);
   }
 
@@ -109,8 +113,9 @@ export class PoliceCar extends Car {
   think() {
     const out = this.brain.forward(this.sense());
     const tr = this.track;
-    // waiting on the grid behind the start line while the racers get their head start
-    if (this.time < HOLD_TIME) { this.steer = 0; this.throttle = -1; return; }
+    // waiting on the grid behind the start line while the racers get their head start,
+    // or pulled over making an arrest
+    if (this.time < HOLD_TIME || this.time < this.arrestUntil) { this.steer = 0; this.throttle = -1; return; }
     const look = 10 + this.speed * 0.45;
     const r0 = this.target;
     let idx = this.seg, walked = 0;
@@ -158,7 +163,7 @@ export class PoliceCar extends Car {
 
   // police don't do laps – they just need to stay on the road
   updateTrackPosition() {
-    if (this.speed < IDLE_SPEED && this.time > HOLD_TIME) this.idleTime += this.dt || 1 / 60;
+    if (this.speed < IDLE_SPEED && this.time > HOLD_TIME && this.time > this.arrestUntil) this.idleTime += this.dt || 1 / 60;
     const tr = this.track;
     const nr = tr.nearest(this.x, this.z, this.seg);
     this._nr = nr;
@@ -250,6 +255,11 @@ export class PoliceForce {
     for (const c of [...this.cars, ...this.ghosts]) { c.alive = false; c.crashed = false; c.diedAt = -1e9; c.parked = true; }
   }
   resetAll() { for (const c of [...this.cars, ...this.ghosts]) { c.parked = false; c.reset(); } }
+  /** Only the first k real police drive this generation (the best brains); the rest wait off the track. */
+  applyDuty(k) {
+    this.onDuty = Math.max(0, Math.min(this.cars.length, k));
+    this.cars.forEach((c, i) => { if (i >= this.onDuty) { c.alive = false; c.crashed = false; c.diedAt = -1e9; c.parked = true; } });
+  }
 
   setRacers(racers) { this.racers = racers; for (const p of this.cars) p.racers = racers; for (const p of this.ghosts) p.racers = racers; }
 
@@ -264,7 +274,8 @@ export class PoliceForce {
         const dx = c.x - p.x, dz = c.z - p.z;
         const d2 = dx * dx + dz * dz;
         if (d2 >= BUST_DIST * BUST_DIST) continue;
-        if (p.speed >= BUST_SPEED) { c.die('busted'); p.busts++; this.totalBusts++; continue; }
+        if (p.time < p.arrestUntil) continue; // busy with an arrest
+        if (p.speed >= BUST_SPEED) { c.die('busted'); p.busts++; this.totalBusts++; p.arrestUntil = p.time + ARREST_TIME; continue; }
         // a crawling cop is just in the way: the racer bounces off it and loses speed
         const L = Math.sqrt(d2) || 1, nx = dx / L, nz = dz / L;
         const vn = (c.vx - p.vx) * nx + (c.vz - p.vz) * nz;
@@ -277,12 +288,12 @@ export class PoliceForce {
     }
     // trainees only score "would have busted" (each racer once)
     for (const p of this.ghosts) {
-      if (!p.alive || p.airborne || p.speed < BUST_SPEED) continue;
+      if (!p.alive || p.airborne || p.speed < BUST_SPEED || p.time < p.arrestUntil) continue;
       for (let i = 0; i < racers.length; i++) {
         const c = racers[i];
         if (!c.racing || c.airborne || Math.abs(c.roadH - p.roadH) > 2) continue;
         const dx = c.x - p.x, dz = c.z - p.z;
-        if (dx * dx + dz * dz < BUST_DIST * BUST_DIST && !p.caught.has(i)) { p.caught.add(i); p.busts++; }
+        if (dx * dx + dz * dz < BUST_DIST * BUST_DIST && !p.caught.has(i)) { p.caught.add(i); p.busts++; p.arrestUntil = p.time + ARREST_TIME; break; }
       }
     }
   }

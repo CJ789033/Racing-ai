@@ -107,6 +107,12 @@ export const CHANGELOG = [
     'Racers now sense police all the way around them – front, sides and behind – and how fast the nearest one is closing in, so they can learn to dodge police coming from behind',
     'Brains you already trained keep driving the same; they learn to use the radar from here',
   ] },
+  { id: 28, date: '2026-11-04', title: '🚓 Fairer police', items: [
+    'Fixed racers freezing or crashing as soon as the police joined',
+    'After a bust a police car stops for a few seconds to make the arrest, so one car can’t wipe out the whole pack',
+    'Police on duty adapts: a few join first, more come on duty while the racers keep finishing, and some go off duty if nobody can finish',
+    'Racers get a slightly longer head start (3 seconds)',
+  ] },
 ];
 
 export const LATEST_ID = CHANGELOG[CHANGELOG.length - 1].id;

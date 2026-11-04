@@ -162,11 +162,11 @@ export class DevMenu {
       const P = evo.police;
       if (P && (P.cars.length || S.police)) {
         out.police = {
-          active: evo.policeActive, count: P.cars.length, trainees: P.ghosts.length, generation: P.generation,
+          active: evo.policeActive, count: P.cars.length, onDuty: P.onDuty, droughtGens: evo.policeDrought, trainees: P.ghosts.length, generation: P.generation,
           totalBusts: P.totalBusts, lastGenerationBusts: P.lastBusts,
           cars: P.cars.map((c, i) => ({
             n: i + 1, alive: c.alive, parked: !!c.parked, busts: c.busts, speedKmh: r1(c.speed * 3.6), targetDist: r1(c.targetDist),
-            chasing: !!c.chasing, idleS: r1(c.idleTime), wallS: r1(c.wallTime), pursuit: r2(c.pursuit), fitness: r2(c.fitness),
+            chasing: !!c.chasing, arresting: c.time < c.arrestUntil, idleS: r1(c.idleTime), wallS: r1(c.wallTime), pursuit: r2(c.pursuit), fitness: r2(c.fitness),
           })),
         };
       }

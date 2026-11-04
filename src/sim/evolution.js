@@ -47,7 +47,14 @@ export class Evolution {
         genomes.push(g);
       } else genomes.push(null);
     }
-    this.cars = genomes.map(g => new Car(new NeuralNet(this.layers, g || NeuralNet.randomGenome(this.layers, this.settings.initScale)), track, { roadAhead: this.settings.roadAhead }));
+    // which genome entries are the police-radar weights (first layer, radar inputs)
+    const nIn = this.layers[0];
+    this.radarIdx = [];
+    for (let j = 0; j < this.layers[1]; j++) for (let i = BASE_INPUT_SIZE; i < nIn; i++) this.radarIdx.push(j * (nIn + 1) + i);
+    this.cars = genomes.map(g => {
+      if (!g) { g = NeuralNet.randomGenome(this.layers, this.settings.initScale); for (const k of this.radarIdx) g[k] = 0; }
+      return new Car(new NeuralNet(this.layers, g), track, { roadAhead: this.settings.roadAhead });
+    });
     this.police = new PoliceForce(track, this.settings.police || 0, policeGenomes);
     this.linkPolice();
     this.parkPoliceIfWaiting();
@@ -61,8 +68,31 @@ export class Evolution {
   parkPoliceIfWaiting() { if (!this.policeActive) this.police.park(); }
   /** After loading a saved run (bestLap restored): put the police on track if they should be. */
   syncPolice() {
-    if (this.policeActive) { if (this.police.cars.some(c => c.parked)) this.police.resetAll(); this.policeWasActive = true; }
+    if (this.policeActive) {
+      if (this.police.cars.some(c => c.parked)) this.police.resetAll();
+      this.policeWasActive = true;
+      this.policeOnDuty = Math.max(1, Math.min(this.police.cars.length, this.policeOnDuty || Math.ceil(this.police.cars.length / 3)));
+      this.police.applyDuty(this.policeOnDuty);
+    }
     else this.police.park();
+  }
+
+  /**
+   * How many police are on duty adapts to how the racers cope: a third of them (at least one)
+   * start when the police join; one more joins after each generation where enough racers still
+   * finish, and one goes off duty after 3 generations in a row with no finishers. So the
+   * pressure keeps rising as the racers improve, without wiping them out.
+   */
+  updatePoliceDuty(finishers) {
+    const n = this.police.cars.length, pop = this.cars.length;
+    if (!n) return;
+    if (!this.policeOn) {
+      if (finishers >= Math.max(5, 0.1 * pop)) { this.policeOn = true; this.policeOnDuty = Math.max(1, Math.ceil(n / 3)); this.policeDrought = 0; }
+    } else {
+      if (finishers >= Math.max(3, 0.06 * pop)) { this.policeOnDuty = Math.min(n, (this.policeOnDuty || 1) + 1); this.policeDrought = 0; }
+      else if (finishers === 0 && ++this.policeDrought >= 3) { this.policeOnDuty = Math.max(1, (this.policeOnDuty || 1) - 1); this.policeDrought = 0; }
+    }
+    if (this.policeOn) this.police.applyDuty(this.policeOnDuty || n);
   }
 
   linkPolice() {
@@ -175,7 +205,7 @@ export class Evolution {
     });
     this.generation++;
     this.time = 0;
-    if (!this.policeOn && finishers.length >= Math.max(5, 0.1 * this.cars.length)) this.policeOn = true;
+    this.updatePoliceDuty(finishers.length);
     this.policeWasActive = this.policeActive;
     this.parkPoliceIfWaiting();
   }
@@ -196,6 +226,10 @@ export class Evolution {
         else g[i] += gaussian() * strength;
       }
     }
+    // Until police are on the track the radar inputs are always 0, so evolution can't tell good
+    // radar weights from bad: keep them at 0 rather than letting them drift at random – otherwise
+    // the moment police appear, those random weights take over the steering and the racers freeze.
+    if (!this.policeActive && this.radarIdx) for (const k of this.radarIdx) g[k] = 0;
   }
 
   /** Run until the current generation ends (headless). */
