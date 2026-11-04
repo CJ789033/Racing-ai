@@ -4,6 +4,7 @@ import { POLICE_LEVELS } from './sim/police.js';
 import { CHANGELOG, LATEST_ID } from './changelog.js';
 import { Tutorial } from './ui/tutorial.js';
 import { DevMenu } from './ui/devMenu.js';
+import { DebugViz } from './render/debugViz.js';
 import { Scene3D } from './render/scene3d.js';
 import { TrackEditor } from './ui/editor.js';
 import { TileEditor } from './ui/tileEditor.js';
@@ -511,16 +512,17 @@ function hintToast(id, msg) {
 }
 
 // ---------------------------------------------------------------- main loop
-let last = performance.now(), acc = 0, hudTimer = 0, simSteps = 0;
+let last = performance.now(), acc = 0, hudTimer = 0, simSteps = 0, simMs = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  devMenu.tick(simSteps * DT); simSteps = 0;
+  devMenu.tick(simSteps * DT, simMs, simSteps); simSteps = 0; simMs = 0;
   if (state.mode !== 'race' || !state.evo) return;
   const evo = state.evo;
 
   if (!state.paused) {
+    const tSim = performance.now();
     const speed = SPEEDS[state.speedIdx];
     const prevGen = evo.generation, prevBest = evo.bestLap;
     if (speed === 'MAX') {
@@ -535,6 +537,7 @@ function frame(now) {
         if ((steps & 31) === 0 && performance.now() - t0 > 30) { acc = 0; break; } // device can't keep up
       }
     }
+    simMs += performance.now() - tSim;
     if (evo.generation !== prevGen) {
       save();
       if (evo.bestLap && evo.bestLap !== prevBest) toast(`🏆 New best lap: ${evo.bestLap.toFixed(2)} s`);
@@ -543,6 +546,7 @@ function frame(now) {
   }
 
   const leader = evo.leader();
+  if (debugViz.any || debugViz.builtFor) debugViz.update(evo, evo.time);
   scene.updateCars(evo.cars, leader, dt, evo.time, evo.police.cars);
 
   hudTimer -= dt;
@@ -671,7 +675,9 @@ const tutorial = new Tutorial([
 });
 window.__tutorial = tutorial; // for automated tests
 // hidden developer menu: ↑ ↑ ↓ ← → (or swipe up, up, down, left, right)
-const devMenu = new DevMenu(() => ({ state, scene, tileEditor, speed: SPEEDS[state.speedIdx], saveKey: SAVE_KEY }));
+const debugViz = new DebugViz(scene);
+const devMenu = new DevMenu(() => ({ state, scene, tileEditor, speed: SPEEDS[state.speedIdx], saveKey: SAVE_KEY, currentDef }), debugViz);
+window.__dev = devMenu; // for automated tests: __dev.unlock(), __dev.key('F3'), __dev.report()
 function tutorialDone() { try { return !!localStorage.getItem(TUTORIAL_KEY); } catch { return true; } }
 $('iTutorial').onclick = () => { $('settings').classList.add('hidden'); tutorial.start(); };
 

@@ -4,6 +4,7 @@
 
 import { RAY_ANGLES, LOOKAHEAD, RADAR_ZONES, INPUT_SIZE } from '../sim/car.js';
 import { LATEST_ID } from '../changelog.js';
+import { OVERLAYS } from '../render/debugViz.js';
 
 const SEQUENCE = ['up', 'up', 'down', 'left', 'right'];
 const KEYS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
@@ -37,8 +38,11 @@ const r2 = v => (v == null || !Number.isFinite(v) ? v : Math.round(v * 100) / 10
 
 export class DevMenu {
   /** ctx(): { state, scene, tileEditor, speed, saveKey } – read fresh each refresh */
-  constructor(ctx) {
+  constructor(ctx, viz = null) {
     this.ctx = ctx;
+    this.viz = viz;
+    this.unlocked = false; // F1–F6 only work once the menu has been opened in this tab
+    this._stepMs = 0; this._steps = 0; this.stepMs = 0;
     this.seq = [];
     this.fps = 0; this._frames = 0; this._t0 = performance.now();
     this.simRate = 0;
@@ -50,7 +54,12 @@ export class DevMenu {
     root.querySelector('.devClose').onclick = () => this.toggle(false);
     root.querySelector('.devCopy').onclick = () => this.copy();
 
+    // F1–F6 visual debugging (after the menu has been unlocked)
+    this.help = document.createElement('pre');
+    this.help.className = 'devHelp hidden';
+    document.body.appendChild(this.help);
     window.addEventListener('keydown', e => {
+      if (/^F[1-6]$/.test(e.key) && this.unlocked) { e.preventDefault(); this.key(e.key); return; }
       if (e.key === 'Escape' && this.open) { this.toggle(false); return; }
       const k = KEYS[e.key];
       if (k) this.push(k);
@@ -72,7 +81,26 @@ export class DevMenu {
     if (this.seq.join() === SEQUENCE.join()) { this.seq = []; this.toggle(); }
   }
 
+  unlock() { this.unlocked = true; }
+
+  /** F1 = key help; F2–F6 = overlays */
+  key(k) {
+    this.unlock();
+    if (k === 'F1') this.helpOn = !this.helpOn;
+    else if (this.viz) this.viz.toggle(k);
+    this.renderHelp();
+  }
+
+  renderHelp() {
+    const on = this.viz ? this.viz.on : {};
+    const lines = ['DEBUG KEYS  (↑ ↑ ↓ ← → = report)', 'F1  this help'];
+    for (const [k, desc] of Object.entries(OVERLAYS)) lines.push(`${k}  [${on[k] ? 'x' : ' '}] ${desc}`);
+    this.help.textContent = lines.join('\n');
+    this.help.classList.toggle('hidden', !this.helpOn);
+  }
+
   toggle(on = !this.open) {
+    if (on) this.unlock();
     this.open = on;
     this.root.classList.toggle('hidden', !on);
     clearInterval(this.timer);
@@ -80,20 +108,22 @@ export class DevMenu {
   }
 
   /** call once per animation frame with the simulated seconds advanced in it */
-  tick(simSeconds = 0) {
-    this._frames++; this._sim = (this._sim || 0) + simSeconds;
+  tick(simSeconds = 0, simMs = 0, steps = 0) {
+    this._frames++; this._sim = (this._sim || 0) + simSeconds; this._stepMs += simMs; this._steps += steps;
     const now = performance.now();
     if (now - this._t0 >= 1000) {
       const secs = (now - this._t0) / 1000;
       this.fps = this._frames / secs;
       this.simRate = this._sim / secs;
-      this._frames = 0; this._sim = 0; this._t0 = now;
+      this.stepMs = this._steps ? this._stepMs / this._steps : 0;
+      this.frameSimMs = this._stepMs / Math.max(1, this._frames);
+      this._frames = 0; this._sim = 0; this._t0 = now; this._stepMs = 0; this._steps = 0;
     }
   }
 
   /** Everything, as plain data. */
   collect() {
-    const { state, scene, tileEditor, speed, saveKey } = this.ctx();
+    const { state, scene, tileEditor, speed, saveKey, currentDef } = this.ctx();
     const evo = state.evo, tr = state.track;
     const gl = scene.renderer.getContext();
     let gpu = null;
@@ -105,10 +135,12 @@ export class DevMenu {
         userAgent: navigator.userAgent, screen: `${innerWidth}×${innerHeight} @${devicePixelRatio}x`,
         touch: matchMedia('(pointer: coarse)').matches, gpu,
         fps: r1(this.fps), simSecondsPerSecond: r1(this.simRate), speedSetting: speed,
+        msPerSimStep: r2(this.stepMs), simMsPerFrame: r1(this.frameSimMs),
         draws: info.render.calls, triangles: info.render.triangles, geometries: info.memory.geometries, textures: info.memory.textures,
         memoryMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1e6) : undefined,
       },
-      app: { mode: state.mode, editor: state.editorKind, paused: !!state.paused, shadows: state.shadows, seeThrough: state.seeThrough, camera: scene.cameraMode },
+      app: { mode: state.mode, editor: state.editorKind, paused: !!state.paused, shadows: state.shadows, seeThrough: state.seeThrough, camera: scene.cameraMode,
+        overlays: this.viz ? Object.entries(this.viz.on).filter(([, v]) => v).map(([k]) => k).join(' ') || 'none' : undefined },
     };
     if (tileEditor) {
       const res = tileEditor.result || {};
@@ -171,6 +203,15 @@ export class DevMenu {
         };
       }
     }
+    if (evo) {
+      // one line per racer: # state progress speed lap
+      out.racers = evo.cars.map((c, i) => {
+        const st = c.finished ? 'finished' : c.alive ? 'racing' : c.killedBy || 'out';
+        return `#${String(i + 1).padStart(2)} ${st.padEnd(8)} ${String(Math.round(c.maxProgress / (tr ? tr.raceLength : 1) * 100)).padStart(3)}%  ${String(Math.round(c.speed * 3.6)).padStart(3)} km/h  lap ${c.lap}${c.isElite ? '  elite' : ''}${c === evo.leader() ? '  LEADER' : ''}`;
+      });
+    }
+    // the exact track, so it can be loaded and reproduced
+    try { out.trackDefinition = JSON.stringify(stripDef(currentDef ? currentDef() : state.def)); } catch (e) { out.trackDefinition = 'unavailable: ' + e.message; }
     // storage
     const store = {};
     try {
@@ -222,3 +263,4 @@ export class DevMenu {
 }
 
 function stripTile(t) { const o = { ...t }; delete o._painted; return o; }
+function stripDef(d) { return d && d.tiles ? { ...d, tiles: d.tiles.map(stripTile) } : d; }

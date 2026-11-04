@@ -133,6 +133,7 @@ export class PoliceCar extends Car {
       const w = chase * Math.max(0, Math.min(1, front * 2));
       tx += (px - tx) * w; tz += (pz - tz) * w;
     }
+    this.aimX = tx; this.aimZ = tz; // (shown by the F3 debug overlay)
     const err = angleDiff(Math.atan2(tz - this.z, tx - this.x), this.heading);
     this.steer = Math.max(-1, Math.min(1, err * 2.2));
     // always on patrol: below patrol speed the engine is kept pulling

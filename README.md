@@ -33,7 +33,17 @@ Turn on police in **AI** settings. Police never park (once moving they keep at l
 New players get a guided tour (`src/ui/tutorial.js`, steps in `src/main.js`): each step spot-lights one part of the screen – parts, grid, tools, presets, Start evolution, then the race stats, speed, brain, AI settings and the Track button – with Back / Next / Skip (keyboard: ← → Enter Esc). Phones get touch wording. Replay it from **⚙️ AI settings → 🎓 Replay tutorial**.
 
 ### 🛠️ Developer menu
-Hidden: press **↑ ↑ ↓ ← →** (or swipe up, up, down, left, right on a touch screen). Shows the build (commit + build time, so you can tell whether the site has updated), device / GPU / FPS / simulation speed, editor and track diagnostics (roads with no way through or pointing both ways), the AI (generation, settings, why cars went out last generation), the leader's every brain input and output, each police car's state, local storage and captured script errors. **Copy debug report** copies it all as text to paste into a bug report. Code: `src/ui/devMenu.js`.
+Hidden: press **↑ ↑ ↓ ← →** (or swipe up, up, down, left, right on a touch screen). Shows the build (commit + build time, so you can tell whether the site has updated), device / GPU / FPS / simulation speed, editor and track diagnostics (roads with no way through or pointing both ways), the AI (generation, settings, why cars went out last generation), the leader's every brain input and output, each police car's state, local storage and captured script errors. It also lists every racer (state, progress, speed, lap), the time per simulation step, and the exact track definition (JSON) so a reported track can be loaded and reproduced. **[copy]** copies it all as text to paste into a bug report.
+
+Once the menu has been opened in a tab, **F1–F6** toggle visual debugging overlays (drawn on top of everything, through tunnels and bridges):
+- **F1** key help with what's on
+- **F2** movement – each car's heading (white), velocity (cyan racers / blue police) and sideways slide (orange)
+- **F3** police – line from each cop to its target (red), its steering aim (yellow +), arrest ring, numbered cops (match the menu), racer → nearest police (orange) and the leader's 70 m radar range
+- **F4** track – route arrows coloured by distance to the finish, junction branches (magenta), roads with no way through (grey), start / finish, police grid spots, tunnels
+- **F5** sensors – every racer's distance rays (red = close) and the leader's road-ahead points
+- **F6** hidden – the trainee police and obstacle hit areas
+
+For automated tests: `window.__dev.unlock()`, `__dev.key('F3')`, `__dev.report()`. Code: `src/ui/devMenu.js`, `src/render/debugViz.js`.
 
 ### 📝 What's new
 `src/changelog.js` lists every update in plain language. Returning players get a popup with everything added since their last visit (remembered per device); the 📝 buttons (editor and race toolbar) open it any time and show a dot when there's something unseen. **Add an entry with the next id whenever the game changes.**
