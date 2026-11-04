@@ -39,6 +39,9 @@ export class TileEditor {
     this.preview = null;
 
     canvas.addEventListener('pointerdown', e => this.canvasDown(e));
+    // mouse wheel over a piece rotates it (phones have no wheel, so scrolling never rotates there)
+    canvas.addEventListener('wheel', e => this.wheel(e), { passive: false });
+    this._wheelAcc = 0;
     window.addEventListener('pointermove', e => this.pointerMove(e));
     window.addEventListener('pointerup', e => this.pointerUp(e));
     window.addEventListener('pointercancel', () => { this.drag = null; this.press = null; this.draw(); });
@@ -180,8 +183,52 @@ export class TileEditor {
     this.draw();
   }
 
+  // ------------------------------------------------------------ rotation (handle + wheel)
+  /** Canvas-px position of the selected piece's centre and its rotation handle. */
+  rotationHandle(t = this.selected) {
+    if (!t || this.mode !== 'place') return null;
+    const g = pieceGeometry(t), s = this.cellPx;
+    const cx = this.originX + (t.c + g.w / 2) * s, cy = this.originY + (t.r + g.h / 2) * s;
+    const a = (t.rot % 4) * Math.PI / 2; // 0 = up, clockwise
+    const L = Math.max(g.w, g.h) * s / 2 + Math.max(0.55 * s, 22 * this.dpr);
+    return { cx, cy, hx: cx + Math.sin(a) * L, hy: cy - Math.cos(a) * L, L };
+  }
+
+  /** Snap the pointer's direction around the piece centre to a quarter turn. */
+  rotFromPointer(e) {
+    const h = this.rotationHandle(this.rotDrag.tile);
+    const r = this.canvas.getBoundingClientRect();
+    const px = (e.clientX - r.left) * this.dpr, py = (e.clientY - r.top) * this.dpr;
+    const a = Math.atan2(px - h.cx, -(py - h.cy));
+    return { k: ((Math.round(a / (Math.PI / 2)) % 4) + 4) % 4, px, py };
+  }
+
+  wheel(e) {
+    const cell = this.cellAt(e.clientX, e.clientY);
+    const t = (cell && this.tileAt(cell.c, cell.r)) || this.selected;
+    if (!t || this.mode !== 'place') return;
+    e.preventDefault(); // don't scroll the page while rotating
+    this._wheelAcc += e.deltaY;
+    if (Math.abs(this._wheelAcc) < 40) return; // one turn per wheel notch
+    const dir = this._wheelAcc > 0 ? 1 : 3;
+    this._wheelAcc = 0;
+    this.modify(t, { rot: (t.rot + dir) % 4 });
+  }
+
   canvasDown(e) {
     e.preventDefault();
+    // grab the rotation handle of the selected piece?
+    const h = this.rotationHandle();
+    if (h) {
+      const r = this.canvas.getBoundingClientRect();
+      const px = (e.clientX - r.left) * this.dpr, py = (e.clientY - r.top) * this.dpr;
+      if (Math.hypot(px - h.hx, py - h.hy) < 24 * this.dpr) {
+        this.rotDrag = { tile: this.selected, x: px, y: py };
+        this.canvas.setPointerCapture?.(e.pointerId);
+        this.draw();
+        return;
+      }
+    }
     const cell = this.cellAt(e.clientX, e.clientY);
     if (!cell) { this.select(null); return; }
     const t = this.tileAt(cell.c, cell.r);
@@ -205,6 +252,15 @@ export class TileEditor {
   }
 
   pointerMove(e) {
+    if (this.rotDrag) {
+      const { k, px, py } = this.rotFromPointer(e);
+      this.rotDrag.x = px; this.rotDrag.y = py;
+      if (k !== this.rotDrag.tile.rot && this.rotDrag.failed !== k) {
+        if (!this.modify(this.rotDrag.tile, { rot: k })) this.rotDrag.failed = k;
+      }
+      this.draw();
+      return;
+    }
     if (this.press && this.mode === 'select' && !this.drag && !this.box) {
       if (Math.hypot(e.clientX - this.press.x, e.clientY - this.press.y) > DRAG_THRESHOLD) {
         if (this.press.group) this.startDrag({ kind: 'group', tiles: [...this.multi], from: this.press.cell }, e);
@@ -231,6 +287,7 @@ export class TileEditor {
   }
 
   pointerUp(e) {
+    if (this.rotDrag) { this.rotDrag = null; this.draw(); return; }
     if (this.box) {
       const a = this.cellAtClamped(this.box.x0, this.box.y0), b = this.cellAtClamped(this.box.x1, this.box.y1);
       const c0 = Math.min(a.c, b.c), c1 = Math.max(a.c, b.c), r0 = Math.min(a.r, b.r), r1 = Math.max(a.r, b.r);
@@ -609,6 +666,28 @@ export class TileEditor {
       const t = this.selected, g = pieceGeometry(t);
       ctx.strokeStyle = '#ff8a1f'; ctx.lineWidth = 3 * this.dpr;
       ctx.strokeRect(ox + t.c * s + 1.5, oy + t.r * s + 1.5, g.w * s - 3, g.h * s - 3);
+      // rotation handle: a line from the centre to a dot you can drag around
+      const h = this.rotationHandle();
+      if (h) {
+        const d = this.dpr, dragging = !!this.rotDrag;
+        const ex = dragging ? this.rotDrag.x : h.hx, ey = dragging ? this.rotDrag.y : h.hy;
+        if (dragging) { // faint guide circle with the four snap points
+          ctx.strokeStyle = 'rgba(255,138,31,0.35)'; ctx.lineWidth = 1.5 * d; ctx.setLineDash([4 * d, 4 * d]);
+          ctx.beginPath(); ctx.arc(h.cx, h.cy, h.L, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+          for (let q = 0; q < 4; q++) {
+            const a = q * Math.PI / 2;
+            ctx.fillStyle = q === t.rot ? '#ff8a1f' : 'rgba(255,138,31,0.45)';
+            ctx.beginPath(); ctx.arc(h.cx + Math.sin(a) * h.L, h.cy - Math.cos(a) * h.L, 4 * d, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+        ctx.strokeStyle = '#ff8a1f'; ctx.lineWidth = 2.5 * d;
+        ctx.beginPath(); ctx.moveTo(h.cx, h.cy); ctx.lineTo(ex, ey); ctx.stroke();
+        ctx.fillStyle = '#ff8a1f'; ctx.beginPath(); ctx.arc(h.cx, h.cy, 3.5 * d, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.strokeStyle = '#ff8a1f'; ctx.lineWidth = 3 * d;
+        ctx.beginPath(); ctx.arc(ex, ey, 10 * d, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#ff8a1f'; ctx.font = `bold ${12 * d}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('⟳', ex, ey + 0.5 * d); ctx.textBaseline = 'alphabetic';
+      }
     }
     const moving = this.drag && this.drag.kind === 'group';
     for (const t of this.multi) {
@@ -737,10 +816,12 @@ export function drawTile(ctx, tile, map, k, width, alpha = 1, rev = false, pass 
   const g = pieceGeometry(tile);
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; // round ends overlap neighbours: no wedge gaps
-  const path = (pts, shift = 0) => {
+  ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+  const path = (pts, shift = 0, overlap = 0) => {
     ctx.beginPath();
-    pts.forEach((p, i) => { const [x, y] = map(p); i ? ctx.lineTo(x + shift, y + shift) : ctx.moveTo(x + shift, y + shift); });
+    const ext = (a, b) => { const L = Math.hypot(a.x - b.x, a.z - b.z) || 1; return { x: a.x + (a.x - b.x) / L * overlap, z: a.z + (a.z - b.z) / L * overlap }; };
+    const list = overlap && pts.length > 1 ? [ext(pts[0], pts[1]), ...pts.slice(1, -1), ext(pts[pts.length - 1], pts[pts.length - 2])] : pts;
+    list.forEach((p, i) => { const [x, y] = map(p); i ? ctx.lineTo(x + shift, y + shift) : ctx.moveTo(x + shift, y + shift); });
   };
   const bridge = tile.type === 'bridge';
   if (pass === 'shadow' && bridge) {
@@ -750,8 +831,9 @@ export function drawTile(ctx, tile, map, k, width, alpha = 1, rev = false, pass 
       if (raised.length > 1) { path(raised, 0.5 * k * 4); ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = (width + 3) * k; ctx.stroke(); }
     }
   }
-  if (pass === 'border') for (const e of g.edges) { path(e.points); ctx.strokeStyle = bridge ? '#cbd5e1' : '#e8e8e8'; ctx.lineWidth = (width + (bridge ? 3.4 : 2.4)) * k; ctx.stroke(); }
-  if (pass === 'asphalt') for (const e of g.edges) { path(e.points); ctx.strokeStyle = bridge ? '#4b5058' : '#3b3f45'; ctx.lineWidth = width * k; ctx.stroke(); }
+  // tiny overlap past each end hides the anti-aliasing hairline between neighbouring pieces
+  if (pass === 'border') for (const e of g.edges) { path(e.points, 0, 0.15); ctx.strokeStyle = bridge ? '#cbd5e1' : '#e8e8e8'; ctx.lineWidth = (width + (bridge ? 3.4 : 2.4)) * k; ctx.stroke(); }
+  if (pass === 'asphalt') for (const e of g.edges) { path(e.points, 0, 0.15); ctx.strokeStyle = bridge ? '#4b5058' : '#3b3f45'; ctx.lineWidth = width * k; ctx.stroke(); }
   if (pass !== 'detail') { ctx.restore(); return; }
   ctx.lineCap = 'butt';
   if (!g.junction) {

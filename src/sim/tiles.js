@@ -208,7 +208,8 @@ export function pieceGeometry(tile) {
   const ox = (tile.c - COLS / 2) * CELL, oz = (tile.r - ROWS / 2) * CELL;
   const toWorld = p => { const q = tf(p); return { x: ox + q.x, z: oz + q.z, h: q.h || 0 }; };
   const edges = base.edges.map(e => {
-    const steps = Math.max(4, Math.ceil(e.len / 2));
+    // dense sampling so a curve's end segments point along the true tangent (no wedge gaps at joins)
+    const steps = Math.max(4, Math.ceil(e.len / 0.5));
     const points = [];
     for (let i = 0; i <= steps; i++) points.push(toWorld(e.f(i / steps)));
     return { a: e.a, b: e.b, points, len: e.len, tunnel: !!e.tunnel, junction: !!base.junction };
