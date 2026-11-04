@@ -25,7 +25,7 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const DT = 1 / 60;
-const DRIFT_START_BIAS = (globalThis.__driftTune && globalThis.__driftTune.bias) ?? -0.6; // new brains drift only now and then
+const DRIFT_START_BIAS = (globalThis.__driftTune && globalThis.__driftTune.bias) ?? -1.5; // new brains rarely drift (accidental drifts wreck precise tracks like Obstacle course)
 
 export class Evolution {
   constructor(track, settings = {}, seedGenome = null, policeGenomes = null) {
