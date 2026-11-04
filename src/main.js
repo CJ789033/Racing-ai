@@ -246,7 +246,19 @@ function updateEditorInfo(ed) {
 const presetSel = $('ePreset');
 presetSel.onchange = () => {
   const v = presetSel.value;
-  if (state.editorKind === 'tiles') { if (TILE_PRESETS[v]) loadTilePreset(TILE_PRESETS[v]); }
+  if (state.editorKind === 'tiles') {
+    const p = TILE_PRESETS[v];
+    if (p) {
+      loadTilePreset(p);
+      // police maps switch the police on (if they're off)
+      if (p.police && !state.settings.police) {
+        state.settings.police = p.police;
+        const lv = POLICE_LEVELS.find(l => l.n === p.police);
+        toast(`🚓 Police turned on (${lv ? lv.label : p.police}) for this map – change it in ⚙️ AI settings`);
+        save();
+      }
+    }
+  }
   else if (v === 'Random') editor.setPoints(randomTrackPoints(), editor.width);
   else if (PRESETS[v]) editor.setPoints(PRESETS[v].points, PRESETS[v].width);
   presetSel.value = '';

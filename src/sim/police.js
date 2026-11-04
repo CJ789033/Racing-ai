@@ -25,9 +25,10 @@ const POLICE_LAYERS = [POLICE_INPUTS, 12, 8, 3]; // outputs: lane, throttle, cha
 const KEEP_BEST = 2;                 // only the best of the best survive & breed
 
 export class PoliceCar extends Car {
-  constructor(brain, track, spawn) {
+  constructor(brain, track, spawn, reverse = false) {
     super(brain, track);
     this.isPolice = true;
+    this.reverse = reverse; // patrols against the traffic (meets racers head-on)
     this.inputs = new Float32Array(POLICE_INPUTS);
     this.spawn = spawn;
     this.racers = [];
@@ -39,7 +40,7 @@ export class PoliceCar extends Car {
     const tr = this.track, s = this.spawn;
     if (s === undefined) return;
     this.x = tr.cx[s]; this.z = tr.cz[s]; this.seg = s; this.roadH = tr.ch[s];
-    this.heading = Math.atan2(tr.dz[s], tr.dx[s]);
+    this.heading = Math.atan2(tr.dz[s], tr.dx[s]) + (this.reverse ? Math.PI : 0);
     this.busts = 0;
     this.caught = new Set(); // trainees: racers already counted
     this.closest = Infinity;
@@ -49,7 +50,8 @@ export class PoliceCar extends Car {
   }
 
   // pursuit-tuned engine: 15 % more power and top speed than the racers
-  get speedFactor() { return super.speedFactor * 1.15; }
+  // cops patrolling against the traffic drive slower, so racers have a fair chance to swerve
+  get speedFactor() { return super.speedFactor * (this.reverse ? 0.7 : 1.15); }
 
   get racing() { return false; } // never counts towards "cars still racing"
 
@@ -62,10 +64,11 @@ export class PoliceCar extends Car {
     }
     let k = RAY_ANGLES.length;
     inp[k++] = this.speed / 48;
-    inp[k++] = Math.max(-1.5, Math.min(1.5, this.lateral / tr.halfWidth));
+    const sg = this.reverse ? -1 : 1; // road inputs are relative to the cop's own direction
+    inp[k++] = Math.max(-1.5, Math.min(1.5, sg * this.lateral / tr.halfWidth));
     let idx = this.seg, walked = 0;
     for (const ahead of P_LOOK) {
-      while (walked < ahead) { const n = tr.next[idx]; if (n === idx) break; idx = n; walked += tr.step; }
+      while (walked < ahead) { const n = this.routeNext(idx, null); if (n === idx) break; idx = n; walked += tr.step; }
       inp[k++] = Math.max(-1, Math.min(1, angleDiff(Math.atan2(tr.cz[idx] - this.z, tr.cx[idx] - this.x), h) / (Math.PI / 2)));
     }
     // the nearest racer still in the race
@@ -81,8 +84,8 @@ export class PoliceCar extends Car {
       inp[k++] = angleDiff(Math.atan2(uz, ux), h) / Math.PI;
       inp[k++] = 1 - d / SEE_RACER;
       inp[k++] = Math.max(-1, Math.min(1, -((best.vx - this.vx) * ux + (best.vz - this.vz) * uz) / 40)); // + = getting closer
-      inp[k++] = Math.max(-1.5, Math.min(1.5, best.lateral / tr.halfWidth));                          // racer's lane
-      inp[k++] = Math.max(-1, Math.min(1, ((best.x - this.x) * tr.dx[this.seg] + (best.z - this.z) * tr.dz[this.seg]) / 60)); // + = ahead along the road
+      inp[k++] = Math.max(-1.5, Math.min(1.5, sg * best.lateral / tr.halfWidth));                          // racer's lane
+      inp[k++] = Math.max(-1, Math.min(1, sg * ((best.x - this.x) * tr.dx[this.seg] + (best.z - this.z) * tr.dz[this.seg]) / 60)); // + = ahead along the road
       if (d < this.closest) this.closest = d;
       // chasing = moving and closing in on a racer (parked cops don't earn this)
       const closing = -((best.vx - this.vx) * ux + (best.vz - this.vz) * uz);
@@ -100,9 +103,10 @@ export class PoliceCar extends Car {
     const out = this.brain.forward(this.sense());
     const tr = this.track;
     const look = 10 + this.speed * 0.45;
+    const r0 = this.target;
     let idx = this.seg, walked = 0;
-    while (walked < look) { const n = tr.next[idx]; if (n === idx) break; idx = n; walked += tr.step; }
-    const off = out[0] * (tr.halfWidth - 1.2);
+    while (walked < look) { const n = this.routeNext(idx, r0); if (n === idx) break; idx = n; walked += tr.step; }
+    const off = out[0] * (tr.halfWidth - 1.2) * (this.reverse ? -1 : 1); // + = the cop's right
     let tx = tr.cx[idx] - tr.dz[idx] * off, tz = tr.cz[idx] + tr.dx[idx] * off;
     // chase: blend the aim point towards where the nearest racer is heading
     const chase = (out[2] + 1) / 2, r = this.target;
@@ -119,6 +123,29 @@ export class PoliceCar extends Car {
     this.steer = Math.max(-1, Math.min(1, err * 2.2));
     // always on patrol: below patrol speed the engine is kept pulling
     this.throttle = this.speed < PATROL_SPEED ? Math.max(out[1], 0.6) : out[1];
+  }
+
+  /**
+   * Next sample on the cop's own route: like the racers' route, except at a
+   * junction the cop takes the branch that heads towards its target racer
+   * (where that racer is going to be), so racers can't escape just by turning off.
+   */
+  routeNext(idx, r) {
+    const tr = this.track, rev = this.reverse && tr.prev;
+    const step = rev ? tr.prev : tr.next;
+    const alts = (rev ? tr.reverseAlts : tr.junctionAlts)?.get(idx);
+    if (!alts || !r) return step[idx];
+    const d = Math.hypot(r.x - this.x, r.z - this.z), lead = Math.min(2, d / (this.speed + 10));
+    const px = r.x + r.vx * lead, pz = r.z + r.vz * lead;
+    let best = step[idx], bd = Infinity;
+    for (const a of alts) {
+      // look 25 m down each branch
+      let j = a, w = 0;
+      while (w < 25) { const n = step[j]; if (n === j) break; j = n; w += tr.step; }
+      const dd = (tr.cx[j] - px) ** 2 + (tr.cz[j] - pz) ** 2;
+      if (dd < bd) { bd = dd; best = a; }
+    }
+    return best;
   }
 
   // police don't do laps – they just need to stay on the road
@@ -165,14 +192,23 @@ export class PoliceCar extends Car {
 }
 
 /** Points spread along the lap where police wait (never right at the start). */
+/**
+ * Points spread evenly by race progress over every road the race can use (side
+ * roads too, not just the shortest lap), so police wait all along the course –
+ * but never right after the start or just before the finish.
+ */
 function spawnPoints(track, n) {
-  const pts = [];
-  for (let i = 0; i < n; i++) {
-    const target = track.lapLength * (0.22 + 0.68 * (i + 0.5) / n);
-    let idx = track.startIndex, walked = 0;
-    while (walked < target) { const nx = track.next[idx]; if (nx === idx) break; idx = nx; walked += track.step; }
-    pts.push(idx);
+  if (!n) return [];
+  const L = track.lapLength, cand = [];
+  for (let i = 0; i < track.N; i++) {
+    if (!track.edgeDir[track.edgeOf[i]]) continue;          // not on dead ends
+    const d = track.D[i];
+    if (d >= 0.1 * L && d <= 0.78 * L) cand.push(i);         // ~22 % … 90 % of the way round
   }
+  if (!cand.length) cand.push(track.startIndex);
+  cand.sort((a, b) => track.D[b] - track.D[a]);              // in race order (parallel routes interleave)
+  const pts = [];
+  for (let k = 0; k < n; k++) pts.push(cand[Math.min(cand.length - 1, Math.floor((k + 0.5) / n * cand.length))]);
   return pts;
 }
 
@@ -190,12 +226,15 @@ export class PoliceForce {
   resize(n, genomes = null) {
     const size = NeuralNet.genomeSize(POLICE_LAYERS);
     const old = (genomes || [...this.cars, ...this.ghosts].map(c => c.brain.genome)).filter(g => g && g.length === size);
+    // on tracks with junctions racers can escape down side roads, so every third cop
+    // patrols against the traffic to meet them head-on; on a plain loop they all chase
+    const oncoming = !!(this.track.junctionAlts && this.track.junctionAlts.size);
     const make = (spawns, offset) => spawns.map((s, i) => {
       let g;
       const k = i + offset;
       if (old.length) { g = Float32Array.from(old[k % old.length]); if (k >= old.length) mutate(g, 0.1, 0.4); }
       else g = NeuralNet.randomGenome(POLICE_LAYERS, 1);
-      return new PoliceCar(new NeuralNet(POLICE_LAYERS, g), this.track, s);
+      return new PoliceCar(new NeuralNet(POLICE_LAYERS, g), this.track, s, oncoming && k % 3 === 2);
     });
     this.cars = make(spawnPoints(this.track, n), 0);
     this.ghosts = n ? make(spawnPoints(this.track, ghostCount(n)), n) : [];

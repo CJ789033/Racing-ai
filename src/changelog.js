@@ -91,6 +91,12 @@ export const CHANGELOG = [
     'A guided tour for new players that walks through building a track and watching the AI learn',
     'Replay it any time from ⚙️ AI settings',
   ] },
+  { id: 25, date: '2026-11-04', title: '🚓 Police chase map', items: [
+    'New preset “Police chase”: lots of junctions and routes to escape – loading it turns police on',
+    'Police now wait all over the course, side roads included',
+    'At junctions police turn towards the racer they’re hunting, so taking a side road isn’t a free escape',
+    'On tracks with junctions some police patrol against the traffic to cut racers off head-on',
+  ] },
 ];
 
 export const LATEST_ID = CHANGELOG[CHANGELOG.length - 1].id;

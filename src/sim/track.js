@@ -266,6 +266,44 @@ export class Track {
       for (const t of succ[st]) if (this.edgeDir[t >> 1] === (t & 1 ? -1 : 1) && (best < 0 || Ds[t] < Ds[best])) best = t;
       bestSucc[e] = best;
     }
+    // every legal way on from the end of each usable edge (police pick the one towards their target)
+    const alts = new Map();
+    for (let e = 0; e < E; e++) {
+      if (!this.edgeDir[e]) continue;
+      const st = 2 * e + (this.edgeDir[e] > 0 ? 0 : 1);
+      const endSample = this.edgeDir[e] > 0 ? this.edgeStart[e] + this.edgeCount[e] - 1 : this.edgeStart[e];
+      const list = [];
+      for (const t of succ[st]) {
+        if (this.edgeDir[t >> 1] !== (t & 1 ? -1 : 1)) continue;
+        const te = t >> 1;
+        list.push(t & 1 ? this.edgeStart[te] + this.edgeCount[te] - 1 : this.edgeStart[te]);
+      }
+      if (list.length > 1) alts.set(endSample, list);
+    }
+    this.junctionAlts = alts; // sample -> [first sample of each legal branch]
+    // the same backwards (for police patrolling against the traffic)
+    this.prev = new Int32Array(N);
+    const revAlts = new Map();
+    for (let i = 0; i < N; i++) this.prev[i] = i;
+    for (let e = 0; e < E; e++) {
+      const dir = this.edgeDir[e], s0 = this.edgeStart[e], n = this.edgeCount[e];
+      if (!dir) continue;
+      for (let k = 0; k < n; k++) {
+        const i = s0 + k;
+        if (dir > 0 && k > 0) this.prev[i] = i - 1;
+        if (dir < 0 && k < n - 1) this.prev[i] = i + 1;
+      }
+      const st = 2 * e + (dir > 0 ? 0 : 1), entry = dir > 0 ? s0 : s0 + n - 1;
+      const list = [];
+      for (const p of pred[st]) {
+        if (this.edgeDir[p >> 1] !== (p & 1 ? -1 : 1)) continue;
+        const pe = p >> 1;
+        list.push(p & 1 ? this.edgeStart[pe] : this.edgeStart[pe] + this.edgeCount[pe] - 1);
+      }
+      if (list.length) this.prev[entry] = list[0];
+      if (list.length > 1) revAlts.set(entry, list);
+    }
+    this.reverseAlts = revAlts;
     this.startIndex = this.edgeStart[ahead];
     this.finishIndex = this.edgeStart[behind] + this.edgeCount[behind] - 1;
     this.lapLength = this.D[this.startIndex];
@@ -302,6 +340,7 @@ export class Track {
       }
     }
     this.next[this.finishIndex] = this.startIndex; // look ahead over the line
+    this.prev[this.startIndex] = this.finishIndex;
     this.dx = F(); this.dz = F();
     for (let i = 0; i < N; i++) {
       let j = i, guard = 0;
