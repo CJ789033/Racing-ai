@@ -97,6 +97,12 @@ export const CHANGELOG = [
     'At junctions police turn towards the racer they’re hunting, so taking a side road isn’t a free escape',
     'On tracks with junctions some police patrol against the traffic to cut racers off head-on',
   ] },
+  { id: 26, date: '2026-11-04', title: '🚓 Police start behind you', items: [
+    'Police now line up on a grid behind the start line and set off 2 seconds after the racers – then they hunt you down (they get faster when far behind)',
+    'Police join once the racers can finish laps, so the cars learn the track first',
+    'T junctions and crossroads have smooth turning lanes instead of a sharp 90° kink',
+    'Police chase map: wider road and 3 laps, so there’s time for a proper chase',
+  ] },
 ];
 
 export const LATEST_ID = CHANGELOG[CHANGELOG.length - 1].id;

@@ -153,6 +153,7 @@ function save() {
       bestGenome: evo.bestGenome && Array.from(evo.bestGenome),
       policeGenomes: evo.police.cars.length ? evo.police.genomes : null,
       policeBusts: evo.police.totalBusts,
+      policeOn: !!evo.policeOn,
       history: evo.history.slice(-300),
     },
   };
@@ -201,6 +202,8 @@ function startRace({ fromSave = null, reset = false } = {}) {
       bestGenome: savedBest && savedBest.length === state.evo.cars[0].brain.size ? savedBest : null,
       history: fromSave.history || [],
     });
+    state.evo.policeOn = fromSave.policeOn ?? !!fromSave.bestLap; // older saves: on if they'd learned the track
+    state.evo.syncPolice();
   } else if (reset || !state.evo || trackChanged) {
     // A new track keeps the best brain so far as a starting point (transfer learning)
     const seed = !reset && state.evo ? state.evo.bestGenome : null;
@@ -554,7 +557,8 @@ function frame(now) {
     $('rowPolice').classList.toggle('hidden', !pc); $('legPolice').classList.toggle('hidden', !pc);
     if (pc) {
       let now = 0; for (const c of evo.cars) if (c.busted) now++;
-      $('sPolice').textContent = `${now} now · ${evo.police.totalBusts} total`;
+      $('sPoliceLbl').textContent = evo.policeActive ? '🚨 Busted' : '🚓 Police';
+      $('sPolice').textContent = evo.policeActive ? `${now} now · ${evo.police.totalBusts} total` : 'join once cars finish';
     }
     const ls = evo.lastStats;
     $('sLast').textContent = ls ? (ls.bestLap ? `${ls.bestLap.toFixed(2)} s (${ls.finishers}🏁)` : `${(ls.bestProgress * 100).toFixed(0)}%`) : '–';

@@ -50,6 +50,19 @@ export class Evolution {
     this.cars = genomes.map(g => new Car(new NeuralNet(this.layers, g || NeuralNet.randomGenome(this.layers, this.settings.initScale)), track, { roadAhead: this.settings.roadAhead }));
     this.police = new PoliceForce(track, this.settings.police || 0, policeGenomes);
     this.linkPolice();
+    this.parkPoliceIfWaiting();
+  }
+
+  /**
+   * Police join once the racers can finish reliably (a generation where at least
+   * 20 % of the cars finished) – first the racers learn the track, then the chase begins.
+   */
+  get policeActive() { return !!this.policeOn; }
+  parkPoliceIfWaiting() { if (!this.policeActive) this.police.park(); }
+  /** After loading a saved run (bestLap restored): put the police on track if they should be. */
+  syncPolice() {
+    if (this.policeActive) { if (this.police.cars.some(c => c.parked)) this.police.resetAll(); this.policeWasActive = true; }
+    else this.police.park();
   }
 
   linkPolice() {
@@ -63,6 +76,7 @@ export class Evolution {
     this.settings.police = n;
     this.police.resize(n);
     this.linkPolice();
+    this.syncPolice();
   }
 
   /** Cars still trying to finish their lap (finished cars drive on for show). */
@@ -90,7 +104,7 @@ export class Evolution {
     this.time += DT;
     let alive = 0;
     for (const c of this.cars) c.step(DT);
-    if (this.police.cars.length) this.police.step(DT, this.cars);
+    if (this.police.cars.length && this.policeActive) this.police.step(DT, this.cars);
     for (const c of this.cars) if (c.racing) alive++;
     if (alive === 0 || this.time >= this.timeLimit) { this.nextGeneration(); return true; }
     return false;
@@ -148,7 +162,8 @@ export class Evolution {
       next.push(child);
     }
 
-    this.police.nextGeneration();
+    if (this.policeWasActive) this.police.nextGeneration(); // (no police evolution while they wait)
+    else this.police.resetAll();
     resetObstacles(this.track.obstacles); // smashed crates are rebuilt for the next generation
     this.cars.forEach((car, i) => {
       car.brain.genome = next[i];
@@ -157,6 +172,9 @@ export class Evolution {
     });
     this.generation++;
     this.time = 0;
+    if (!this.policeOn && finishers.length >= Math.max(5, 0.2 * this.cars.length)) this.policeOn = true;
+    this.policeWasActive = this.policeActive;
+    this.parkPoliceIfWaiting();
   }
 
   tournamentPick(sorted) {

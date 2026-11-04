@@ -281,9 +281,8 @@ export class Track {
       if (list.length > 1) alts.set(endSample, list);
     }
     this.junctionAlts = alts; // sample -> [first sample of each legal branch]
-    // the same backwards (for police patrolling against the traffic)
+    // one step back along the route (the police grid lines up behind the start line with it)
     this.prev = new Int32Array(N);
-    const revAlts = new Map();
     for (let i = 0; i < N; i++) this.prev[i] = i;
     for (let e = 0; e < E; e++) {
       const dir = this.edgeDir[e], s0 = this.edgeStart[e], n = this.edgeCount[e];
@@ -301,9 +300,7 @@ export class Track {
         list.push(p & 1 ? this.edgeStart[pe] : this.edgeStart[pe] + this.edgeCount[pe] - 1);
       }
       if (list.length) this.prev[entry] = list[0];
-      if (list.length > 1) revAlts.set(entry, list);
     }
-    this.reverseAlts = revAlts;
     this.startIndex = this.edgeStart[ahead];
     this.finishIndex = this.edgeStart[behind] + this.edgeCount[behind] - 1;
     this.lapLength = this.D[this.startIndex];

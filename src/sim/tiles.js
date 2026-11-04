@@ -99,6 +99,15 @@ export function obstacleParam(o, name) {
 const line = (a, b, h0 = 0, h1 = h0) => u => ({ x: a.x + (b.x - a.x) * u, z: a.z + (b.z - a.z) * u, h: h0 + (h1 - h0) * u });
 const arc = (cx, cz, R, a0, a1) => u => { const a = a0 + (a1 - a0) * u; return { x: cx + Math.cos(a) * R, z: cz + Math.sin(a) * R, h: 0 }; };
 const RING_R = 22;
+/**
+ * Quarter-circle turning lane (radius half a cell) inside a junction cell, from the
+ * port on the west/east side (node a) to the port on the north/south side (node b).
+ * (cx, cz) is the cell corner it curves around; sx/sz point from that corner into the cell.
+ */
+function turnLane(a, b, cx, cz, sx, sz) {
+  const R = CELL / 2;
+  return { a, b, len: Math.PI / 2 * R, f: u => { const t = u * Math.PI / 2; return { x: cx + sx * R * Math.sin(t), z: cz + sz * R * Math.cos(t), h: 0 }; } };
+}
 
 function baseShape(tile) {
   const C = CELL, H2 = C / 2;
@@ -140,6 +149,7 @@ function baseShape(tile) {
         ],
       };
     case 'tee': {
+      // straight through W–E, the stem S, plus curved turning lanes so turns aren't a 90° kink
       const m = { x: H2, z: H2 };
       return {
         w: 1, h: 1, nodes: 4, junction: true,
@@ -148,6 +158,8 @@ function baseShape(tile) {
           { a: 0, b: 3, f: line({ x: 0, z: H2 }, m), len: H2 },
           { a: 3, b: 1, f: line(m, { x: C, z: H2 }), len: H2 },
           { a: 3, b: 2, f: line(m, { x: H2, z: C }), len: H2 },
+          turnLane(0, 2, 0, C, 1, -1), // W -> S
+          turnLane(1, 2, C, C, -1, -1), // E -> S
         ],
       };
     }
@@ -176,6 +188,10 @@ function baseShape(tile) {
           { a: 4, b: 1, f: line(m, { x: C, z: H2 }), len: H2 },
           { a: 2, b: 4, f: line({ x: H2, z: 0 }, m), len: H2 },
           { a: 4, b: 3, f: line(m, { x: H2, z: C }), len: H2 },
+          turnLane(0, 2, 0, 0, 1, 1),   // W -> N
+          turnLane(0, 3, 0, C, 1, -1),  // W -> S
+          turnLane(1, 2, C, 0, -1, 1),  // E -> N
+          turnLane(1, 3, C, C, -1, -1), // E -> S
         ],
       };
     }
@@ -599,13 +615,13 @@ export const TILE_PRESETS = {
     ],
   },
   'Police chase': {
-    width: 12,
+    width: 14,
     police: 6, // turns police on when loaded (if they're off)
     desc: 'Lots of routes to escape the police – and for them to cut you off',
     tiles: () => [
       { type: 'corner', rot: 1, c: 1, r: 6, size: 1 },
       { type: 'tee', rot: 2, c: 2, r: 6 },
-      { type: 'start', rot: 0, c: 3, r: 6, len: 1 },
+      { type: 'start', rot: 0, c: 3, r: 6, len: 1, laps: 3 },
       { type: 'yfork', rot: 1, c: 4, r: 6 },
       { type: 'tee', rot: 2, c: 6, r: 6 },
       { type: 'straight', rot: 0, c: 7, r: 6, len: 2 },
