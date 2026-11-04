@@ -81,11 +81,12 @@ export class Track {
     const E = net.edges.length;
     this.edgeStart = new Int32Array(E); this.edgeCount = new Int32Array(E);
     this.edgeLen = new Float32Array(E); this.edgeA = new Int32Array(E); this.edgeB = new Int32Array(E);
+    this.edgeLane = new Uint8Array(E); // curved turning lanes inside a junction (kerb on the inside only)
     const all = [];
     net.edges.forEach((e, i) => {
       const r = resample(e.points, SAMPLE_STEP);
       this.edgeStart[i] = all.length; this.edgeCount[i] = r.pts.length; this.edgeLen[i] = r.length;
-      this.edgeA[i] = e.a; this.edgeB[i] = e.b;
+      this.edgeA[i] = e.a; this.edgeB[i] = e.b; this.edgeLane[i] = e.lane ? 1 : 0;
       for (const p of r.pts) all.push({ ...p, e: i, tunnel: !!e.tunnel, junction: !!e.junction, hill: !!e.hill });
     });
     const N = this.N = all.length;
@@ -124,7 +125,8 @@ export class Track {
     // samples the same direction so the road edges line up – otherwise the
     // chord of a curve's last segment leaves a thin wedge-shaped gap.
     const sI0 = this.edgeStart[net.aheadEdge], fI0 = this.edgeStart[net.behindEdge] + this.edgeCount[net.behindEdge] - 1;
-    const joins = nodeEnds.filter(l => l.length === 2);
+    // (a junction's curved turning lanes don't count: the straight road through still lines up)
+    const joins = nodeEnds.map(l => l.filter(i => !this.edgeLane[this.edgeOf[i]])).filter(l => l.length === 2);
     joins.push([fI0, sI0]); // the start line joins the two halves of the start road
     const isStart = i => i === this.edgeStart[this.edgeOf[i]];
     for (const [i, j] of joins) {

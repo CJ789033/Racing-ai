@@ -106,7 +106,7 @@ const RING_R = 22;
  */
 function turnLane(a, b, cx, cz, sx, sz) {
   const R = CELL / 2;
-  return { a, b, len: Math.PI / 2 * R, f: u => { const t = u * Math.PI / 2; return { x: cx + sx * R * Math.sin(t), z: cz + sz * R * Math.cos(t), h: 0 }; } };
+  return { a, b, lane: true, len: Math.PI / 2 * R, f: u => { const t = u * Math.PI / 2; return { x: cx + sx * R * Math.sin(t), z: cz + sz * R * Math.cos(t), h: 0 }; } };
 }
 
 function baseShape(tile) {
@@ -284,7 +284,7 @@ export function pieceGeometry(tile) {
     const steps = Math.max(4, Math.ceil(e.len / 0.5));
     const points = [];
     for (let i = 0; i <= steps; i++) points.push(toWorld(e.f(i / steps)));
-    return { a: e.a, b: e.b, points, len: e.len, tunnel: !!e.tunnel, junction: !!base.junction };
+    return { a: e.a, b: e.b, points, len: e.len, tunnel: !!e.tunnel, junction: !!base.junction, lane: !!e.lane };
   });
   const geo = {
     w, h, nodes: base.nodes, junction: !!base.junction,
@@ -382,7 +382,7 @@ export function traceLayout(tiles) {
         return;
       }
       if (g.edges.length === 1) tileEdge.set(t, edges.length);
-      edges.push({ a, b, points: e.points, tunnel: e.tunnel, junction: e.junction });
+      edges.push({ a, b, points: e.points, tunnel: e.tunnel, junction: e.junction, lane: e.lane });
     });
   }
   // compact node ids

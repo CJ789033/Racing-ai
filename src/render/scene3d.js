@@ -186,9 +186,9 @@ export class Scene3D {
     };
     // Raised kerb as solid red / white blocks (each block has its own vertices, so colours don't blend)
     const RED = [0.86, 0.1, 0.1], WHITE = [0.96, 0.96, 0.96];
-    const kerbBlocks = (i0, i1, side) => {
+    const kerbBlocks = (i0, i1, side, lift = 0) => {
       const pos = [], col = [];
-      const P = (i, off, y) => [track.cx[i] + track.nx[i] * off * side, track.ch[i] + y, track.cz[i] + track.nz[i] * off * side];
+      const P = (i, off, y) => [track.cx[i] + track.nx[i] * off * side, track.ch[i] + y + (y > ROAD_Y ? lift : 0), track.cz[i] + track.nz[i] * off * side];
       const quad = (a, b, c, d, colr) => { pos.push(...a, ...b, ...c, ...a, ...c, ...d); for (let k = 0; k < 6; k++) col.push(...colr); };
       for (let i = i0; i < i1; i++) {
         // leave the kerb out wherever another road joins here (junction mouths, roundabout arms)
@@ -213,7 +213,12 @@ export class Scene3D {
       const s = track.edgeStart[e], n = track.edgeCount[e], end = s + n - 1;
       const junction = track.junction[s] === 1;
       asphalt.push(strip(s, end, -hw, hw, ROAD_Y, ROAD_Y));
-      kerbs.push(kerbBlocks(s, end, 1), kerbBlocks(s, end, -1));
+      if (track.edgeLane && track.edgeLane[e]) {
+        // a junction's turning lane: only the inside of the curve is a road edge – its outside
+        // runs across the junction's own road, so a kerb there would stick out into the road
+        const turn = track.tx[s] * track.tz[end] - track.tz[s] * track.tx[end]; // > 0: curves towards +n
+        kerbs.push(kerbBlocks(s, end, turn > 0 ? 1 : -1, 0.04)); // a touch higher: covers the joins with the straight kerbs cleanly
+      } else kerbs.push(kerbBlocks(s, end, 1), kerbBlocks(s, end, -1));
       if (!junction) {
         for (let i = s; i < end; i += 4) {
           const p = new THREE.PlaneGeometry(0.3, track.step * 1.6);
