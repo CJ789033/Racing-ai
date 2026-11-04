@@ -227,7 +227,7 @@ function updateEditorInfo(ed) {
   if (ed === tileEditor) {
     const res = ed.result;
     if (ed.preview) info = `✅ Ready · ${res.order.some(t => PIECES[t.type].junction) ? 'shortest lap' : 'lap'} ${ed.preview.lapLength.toFixed(0)} m${ed.preview.laps > 1 ? ` × ${ed.preview.laps} laps` : ''} · ${res.order.length} pieces` + (res.unused ? ` · ${res.unused} unused` : '');
-    else if (ed.tiles.length) issue = res.error ? res.error.msg : null;
+    else if (ed.tiles.length) issue = res.error ? res.error.msg : ed.previewError || null;
     else info = 'Start by dragging the Start piece onto the grid';
   } else {
     if (ed.preview) info = `Length ${ed.preview.length.toFixed(0)} m · ${ed.points.length} points · width ${ed.width} m`;

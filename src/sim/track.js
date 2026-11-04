@@ -155,35 +155,121 @@ export class Track {
     nb.forEach((l, i) => this.nbList.set(l, this.nbStart[i]));
     this._stamp = new Int32Array(N); this._gen = 0; this._queue = new Int32Array(N);
 
-    // ---- shortest distance to the finish from every node, then every sample
+    // ---- which way does each road go?
+    // Traffic is modelled as a one-way network of "edge driven A->B" / "edge driven B->A"
+    // states. At a node a car may carry on into another edge only if the turn is not
+    // sharper than MAX_TURN (no hairpin from one branch of a Y fork back up the other,
+    // no U-turns). Each edge then gets the single direction traffic from the start line
+    // uses, and the distance-to-finish D falls steadily along it.
     const ahead = net.aheadEdge, behind = net.behindEdge;
-    const L_AHEAD = this.edgeA[ahead], L_BEHIND = this.edgeB[behind];
-    const Dn = new Float64Array(net.nodeCount).fill(Infinity);
-    Dn[L_BEHIND] = 0;
-    const done = new Uint8Array(net.nodeCount);
-    const nodeAdj = Array.from({ length: net.nodeCount }, () => []);
-    for (let e = 0; e < E; e++) { nodeAdj[this.edgeA[e]].push([this.edgeB[e], this.edgeLen[e]]); nodeAdj[this.edgeB[e]].push([this.edgeA[e], this.edgeLen[e]]); }
-    for (;;) { // Dijkstra (networks are small)
+    const L_AHEAD = this.edgeA[ahead];
+    const S2 = 2 * E;                               // state 2e = A->B, 2e+1 = B->A
+    const sFrom = st => (st & 1 ? this.edgeB : this.edgeA)[st >> 1];
+    const sTo = st => (st & 1 ? this.edgeA : this.edgeB)[st >> 1];
+    const dirAt = (st, atEnd) => {
+      // heading of a state where it leaves its start node (atEnd = false) or reaches its end node
+      const e = st >> 1, s0 = this.edgeStart[e], n = this.edgeCount[e], rev = st & 1;
+      const k = Math.min(n - 1, 3);
+      let i0, i1;
+      if (atEnd !== !!rev) { i0 = s0 + n - 1 - k; i1 = s0 + n - 1; } else { i0 = s0; i1 = s0 + k; }
+      let dx = this.cx[i1] - this.cx[i0], dz = this.cz[i1] - this.cz[i0];
+      if (rev) { dx = -dx; dz = -dz; }
+      const L = Math.hypot(dx, dz) || 1;
+      return [dx / L, dz / L];
+    };
+    const COS_MAX_TURN = Math.cos(115 * Math.PI / 180);
+    const outOf = Array.from({ length: net.nodeCount }, () => []);
+    for (let st = 0; st < S2; st++) outOf[sFrom(st)].push(st);
+    const succ = Array.from({ length: S2 }, () => []);
+    const pred = Array.from({ length: S2 }, () => []);
+    for (let st = 0; st < S2; st++) {
+      const v = sTo(st);
+      if (st === 2 * behind) continue;               // crossing the finish line ends the lap
+      const [ax, az] = dirAt(st, true);
+      for (const t of outOf[v]) {
+        if ((t >> 1) === (st >> 1)) continue;        // no U-turn on the same road
+        if (t === 2 * ahead + 1 || t === 2 * behind + 1) continue; // never backwards over the line
+        const [bx, bz] = dirAt(t, false);
+        if (ax * bx + az * bz < COS_MAX_TURN) continue;
+        succ[st].push(t); pred[t].push(st);
+      }
+    }
+    // distance from the beginning of each state to the finish (Dijkstra backwards from the line)
+    const Ds = new Float64Array(S2).fill(Infinity);
+    Ds[2 * behind] = this.edgeLen[behind];
+    const dsDone = new Uint8Array(S2);
+    for (;;) {
       let v = -1;
-      for (let i = 0; i < net.nodeCount; i++) if (!done[i] && Dn[i] < Infinity && (v < 0 || Dn[i] < Dn[v])) v = i;
+      for (let i = 0; i < S2; i++) if (!dsDone[i] && Ds[i] < Infinity && (v < 0 || Ds[i] < Ds[v])) v = i;
       if (v < 0) break;
-      done[v] = 1;
-      if (v === L_AHEAD) continue; // can't drive backwards over the start line
-      for (const [w, l] of nodeAdj[v]) if (w !== L_AHEAD && Dn[v] + l < Dn[w]) Dn[w] = Dn[v] + l;
+      dsDone[v] = 1;
+      for (const p of pred[v]) { const d = this.edgeLen[p >> 1] + Ds[v]; if (d < Ds[p]) Ds[p] = d; }
+    }
+    // distance from the start line to the beginning of each state (forward)
+    const Df = new Float64Array(S2).fill(Infinity);
+    Df[2 * ahead] = 0;
+    const dfDone = new Uint8Array(S2);
+    for (;;) {
+      let v = -1;
+      for (let i = 0; i < S2; i++) if (!dfDone[i] && Df[i] < Infinity && (v < 0 || Df[i] < Df[v])) v = i;
+      if (v < 0) break;
+      dfDone[v] = 1;
+      for (const t of succ[v]) { const d = Df[v] + this.edgeLen[v >> 1]; if (d < Df[t]) Df[t] = d; }
+    }
+    // pick each edge's direction: one that traffic from the start can use to reach the finish
+    // (if both can, the one on the shorter lap through that edge)
+    this.edgeDir = new Int8Array(E);                 // 1 = A->B, -1 = B->A, 0 = no way through (dead end, unreachable)
+    for (let e = 0; e < E; e++) {
+      const f = Df[2 * e] + Ds[2 * e], b = Df[2 * e + 1] + Ds[2 * e + 1];
+      if (f < Infinity || b < Infinity) this.edgeDir[e] = f <= b ? 1 : -1;
+    }
+    // node distances (for roads with no way through): best usable state leaving the node
+    const Dn = new Float64Array(net.nodeCount).fill(Infinity);
+    Dn[this.edgeB[behind]] = 0;
+    for (let e = 0; e < E; e++) {
+      if (!this.edgeDir[e]) continue;
+      const st = 2 * e + (this.edgeDir[e] > 0 ? 0 : 1);
+      const v = sFrom(st);
+      if (Ds[st] < Dn[v]) Dn[v] = Ds[st];
+      const w = sTo(st), dw = Ds[st] - this.edgeLen[e];
+      if (dw < Dn[w]) Dn[w] = dw;
+    }
+    // dead-end spurs: distance grows as you drive in (so going in looks like losing ground)
+    for (let it = 0; it < E; it++) {
+      let changed = false;
+      for (let e = 0; e < E; e++) {
+        if (this.edgeDir[e]) continue;
+        const a = this.edgeA[e], b = this.edgeB[e], l = this.edgeLen[e];
+        if (Dn[a] + l < Dn[b] && b !== L_AHEAD) { Dn[b] = Dn[a] + l; changed = true; }
+        if (Dn[b] + l < Dn[a] && a !== L_AHEAD) { Dn[a] = Dn[b] + l; changed = true; }
+      }
+      if (!changed) break;
     }
     this.nodeD = Dn;
     this.D = new Float32Array(N);
     for (let e = 0; e < E; e++) {
       const s = this.edgeStart[e], n = this.edgeCount[e], len = this.edgeLen[e];
+      const dir = this.edgeDir[e];
       for (let k = 0; k < n; k++) {
         const arc = len * k / Math.max(1, n - 1);
-        this.D[s + k] = Math.min(arc + Dn[this.edgeA[e]], len - arc + Dn[this.edgeB[e]]);
+        if (dir > 0) this.D[s + k] = Ds[2 * e] - arc;
+        else if (dir < 0) this.D[s + k] = Ds[2 * e + 1] - (len - arc);
+        else this.D[s + k] = Math.min(arc + Dn[this.edgeA[e]], len - arc + Dn[this.edgeB[e]]);
       }
+    }
+    // best way on from the end of each usable edge (for the "next" pointers)
+    const bestSucc = new Int32Array(E).fill(-1);
+    for (let e = 0; e < E; e++) {
+      if (!this.edgeDir[e]) continue;
+      const st = 2 * e + (this.edgeDir[e] > 0 ? 0 : 1);
+      let best = -1;
+      for (const t of succ[st]) if (this.edgeDir[t >> 1] === (t & 1 ? -1 : 1) && (best < 0 || Ds[t] < Ds[best])) best = t;
+      bestSucc[e] = best;
     }
     this.startIndex = this.edgeStart[ahead];
     this.finishIndex = this.edgeStart[behind] + this.edgeCount[behind] - 1;
     this.lapLength = this.D[this.startIndex];
-    if (!isFinite(this.lapLength)) throw new Error('Track never returns to the start');
+    if (!isFinite(this.lapLength)) throw new Error('Driving forwards from the start line never gets back to it – check which way the Start faces and how the junctions join (cars can’t make U-turns or hairpin back up a fork)');
     this.length = this.lapLength;
     this.laps = Math.max(1, Math.min(10, net.laps || 1));
     this.raceLength = this.lapLength * this.laps;
@@ -191,6 +277,14 @@ export class Track {
     // ---- "next" sample along the best route, and the driving direction there
     this.next = new Int32Array(N);
     for (let i = 0; i < N; i++) {
+      const e = this.edgeOf[i], s0 = this.edgeStart[e], n = this.edgeCount[e], dir = this.edgeDir[e];
+      if (dir) {
+        const k = i - s0;
+        if (dir > 0 && k < n - 1) { this.next[i] = i + 1; continue; }
+        if (dir < 0 && k > 0) { this.next[i] = i - 1; continue; }
+        const t = bestSucc[e];
+        if (t >= 0) { const te = t >> 1; this.next[i] = t & 1 ? this.edgeStart[te] + this.edgeCount[te] - 1 : this.edgeStart[te]; continue; }
+      }
       let best = i, bd = this.D[i] - 1e-4;
       for (let k = this.nbStart[i]; k < this.nbStart[i + 1]; k++) {
         const j = this.nbList[k];

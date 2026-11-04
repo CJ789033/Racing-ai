@@ -745,7 +745,7 @@ export class TileEditor {
     this.result = traceLayout(this.tiles);
     this.preview = null;
     if (this.result.ok) {
-      try { this.preview = new Track(this.result.net, this.width); } catch { this.preview = null; }
+      try { this.preview = new Track(this.result.net, this.width); this.previewError = null; } catch (e) { this.preview = null; this.previewError = e.message; }
     }
     if (panel) this.renderPanel();
     this.draw();
