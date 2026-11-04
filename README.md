@@ -29,6 +29,9 @@ learning), so it usually adapts quickly. Use **AI → Reset AI** to start from s
 ### 🚓 Police (co-evolution)
 Turn on police in **AI** settings. Police cars patrol the lap – they never park (they always keep at least ~43 km/h) and bounce off barriers instead of crashing out. A built-in instinct keeps them on the road, and they're 15 % faster than racers; their own neural nets evolve the *tactics*: which lane to take, how hard to drive, and when to stop following the road and chase the nearest racer in front of them. Only a cop moving at 30 km/h+ can bust a racer 🚨 – a racer that hits a crawling cop just bounces off. Every generation a hidden squad of trainee cops drives the same track (they score "would-have-busted" catches but don't touch the racers); cops and trainees are ranked together and only the very best brains become the next real police, while all new trainees are mutants of the top two. Racers sense the nearest police car and their distance sensors see police cars, so both sides keep having to adapt – an arms race. Code: `src/sim/police.js`.
 
+### 🎓 Tutorial
+New players get a guided tour (`src/ui/tutorial.js`, steps in `src/main.js`): each step spot-lights one part of the screen – parts, grid, tools, presets, Start evolution, then the race stats, speed, brain, AI settings and the Track button – with Back / Next / Skip (keyboard: ← → Enter Esc). Phones get touch wording. Replay it from **⚙️ AI settings → 🎓 Replay tutorial**.
+
 ### 📝 What's new
 `src/changelog.js` lists every update in plain language. Returning players get a popup with everything added since their last visit (remembered per device); the 📝 buttons (editor and race toolbar) open it any time and show a dot when there's something unseen. **Add an entry with the next id whenever the game changes.**
 

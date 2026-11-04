@@ -2,6 +2,7 @@ import { Track, PRESETS, randomTrackPoints } from './sim/track.js';
 import { Evolution, DEFAULT_SETTINGS, DT, upgradeGenome } from './sim/evolution.js';
 import { POLICE_LEVELS } from './sim/police.js';
 import { CHANGELOG, LATEST_ID } from './changelog.js';
+import { Tutorial } from './ui/tutorial.js';
 import { Scene3D } from './render/scene3d.js';
 import { TrackEditor } from './ui/editor.js';
 import { TileEditor } from './ui/tileEditor.js';
@@ -495,7 +496,6 @@ function hintToast(id, msg) {
 let last = performance.now(), acc = 0, hudTimer = 0;
 function frame(now) {
   requestAnimationFrame(frame);
-if (newsUnseen()) openNews(); // came back after updates: show what changed since the last visit
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (state.mode !== 'race' || !state.evo) return;
@@ -602,6 +602,57 @@ $('eNews').onclick = openNews;
 $('newsClose').onclick = () => { $('news').classList.add('hidden'); markNewsSeen(); };
 $('news').onclick = e => { if (e.target === $('news')) $('newsClose').onclick(); };
 
+// ---------------------------------------------------------------- tutorial
+const TUTORIAL_KEY = 'racing-ai-tutorial-done';
+const tutorial = new Tutorial([
+  { mode: 'editor', target: null, title: '👋 Welcome to Racing AI!',
+    text: 'You build a race track. A crowd of little AI cars then <b>teaches itself</b> to drive it – each generation the best drivers are kept and slightly changed, until they find the fastest lap.<br><br>This quick tour shows you around. You can replay it any time from ⚙️ AI settings.' },
+  { mode: 'editor', target: '#palette', title: '🧩 The parts',
+    text: 'These are your track pieces: roads, <b>Junctions</b> and <b>Obstacles</b> (switch with the tabs). Drag one onto the grid to place it.<br>Drag a piece from the grid back here to delete it.',
+    phoneText: 'These are your track pieces: roads, <b>Junctions</b> and <b>Obstacles</b> (switch with the tabs). Tap one to pick it, then <b>double-tap</b> an empty square to place it – or drag it onto the grid.<br>Drag a piece from the grid back here to delete it.' },
+  { mode: 'editor', target: () => tileEditor.gridScreenRect(), title: '🗺️ The grid',
+    text: '<b>Click a piece</b> to change it (length, curve, tunnel, laps on the Start…). Click it again or use the ⟳ handle to rotate, drag it to move it.<br>Drag empty grass to move around, scroll to zoom.<br>The yellow arrows show which way the race goes.',
+    phoneText: '<b>Tap a piece</b> to change it (length, curve, tunnel, laps on the Start…). Tap again or drag the ⟳ handle to rotate, drag it to move it.<br>Drag empty grass to move around, pinch to zoom.<br>The yellow arrows show which way the race goes.' },
+  { mode: 'editor', target: '#editorBar .group.tile-only', title: '🛠️ Tools',
+    text: '<b>Grid</b> size, <b>🖌️ Paint</b> (drag to lay road), <b>⬚ Select</b> (move, copy or delete several pieces at once), <b>🗑️ Delete</b> and <b>✖ Clear</b>.' },
+  { mode: 'editor', target: '#ePreset', title: '📋 Presets',
+    text: 'Not sure where to start? Pick a ready-made track here – figure 8s, roundabouts, an obstacle course and more – and change it however you like.' },
+  { mode: 'editor', target: '#eGo', title: '🏎️ Start evolution',
+    text: 'When the track says <b>✅ Ready</b>, press this to let the AI loose. Let’s try it now!', nextLabel: 'Start it!' },
+  { mode: 'race', target: '#raceHud .stats', title: '📊 Watch them learn',
+    text: '<b>Gen</b> is the generation. At first the cars are clueless and crash quickly – every generation the best are kept and tweaked, so they get further and faster.<br><b>Best lap</b> is the record so far. Cars that are out show 💥 (crashed) or 💤 (stopped).' },
+  { mode: 'race', target: '#bSpeed', title: '⏩ Speed it up',
+    text: 'Learning takes a while at normal speed. Tap this to run faster – <b>MAX</b> trains as fast as your device can.' },
+  { mode: 'race', target: '#bPanels', title: '🧠 Inside the brain',
+    text: 'Shows the leading car’s neural network live – its sensors on the left, steering and gas on the right – plus a chart of progress over the generations.' },
+  { mode: 'race', target: '#bSettings', title: '⚙️ AI settings',
+    text: 'Population, mutation, brain size and <b>🚓 Police</b> – turn them on and they evolve to hunt your racers. You can also replay this tutorial here.' },
+  { mode: 'race', target: '#bEdit', title: '✏️ Change the track',
+    text: 'Go back to the builder any time. When you change the track, the cars keep their best brain and carry on learning from there.' },
+  { mode: 'race', target: null, title: '🏁 That’s it!',
+    text: 'Build something tricky and see if the AI can figure it out. Everything is saved on this device. Have fun!' },
+], {
+  ensureMode(mode) {
+    $('settings').classList.add('hidden'); $('news').classList.add('hidden');
+    if (mode === 'editor' && state.mode !== 'editor') {
+      if (state.def) loadDefIntoEditor(state.def);
+      enterEditor();
+    }
+    if (mode === 'editor' && state.editorKind !== 'tiles') { setEditorKind('tiles'); enterEditor(); }
+    if (mode === 'race' && state.mode !== 'race') {
+      if (!activeEditor().valid) { setEditorKind('tiles'); loadTilePreset(TILE_PRESETS.Rectangle); }
+      startRace();
+    }
+  },
+  onEnd() {
+    try { localStorage.setItem(TUTORIAL_KEY, '1'); } catch { /* storage blocked */ }
+    if (newsUnseen()) openNews();
+  },
+});
+window.__tutorial = tutorial; // for automated tests
+function tutorialDone() { try { return !!localStorage.getItem(TUTORIAL_KEY); } catch { return true; } }
+$('iTutorial').onclick = () => { $('settings').classList.add('hidden'); tutorial.start(); };
+
 // ---------------------------------------------------------------- boot
 const saved = load();
 initNews(!!saved);
@@ -625,3 +676,5 @@ if (saved && saved.track) {
   enterEditor();
 }
 requestAnimationFrame(frame);
+if (!saved && !tutorialDone()) tutorial.start(); // brand-new player: show them around
+else if (newsUnseen()) openNews();                // came back after updates: show what changed since the last visit

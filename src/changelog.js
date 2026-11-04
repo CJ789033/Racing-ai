@@ -87,6 +87,10 @@ export const CHANGELOG = [
     'Drag a piece back onto the parts list to delete it',
   ] },
   { id: 23, date: '2026-11-04', title: 'What’s new', items: ['This list! It pops up when you come back, with everything that changed since your last visit'] },
+  { id: 24, date: '2026-11-04', title: '🎓 Tutorial', items: [
+    'A guided tour for new players that walks through building a track and watching the AI learn',
+    'Replay it any time from ⚙️ AI settings',
+  ] },
 ];
 
 export const LATEST_ID = CHANGELOG[CHANGELOG.length - 1].id;

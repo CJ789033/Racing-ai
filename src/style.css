@@ -156,3 +156,18 @@ input[type=range] { width: 130px; accent-color: #ff8a1f; }
 .newsTitle .muted { margin-left: auto; }
 .newsEntry ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.4; }
 .newTag { background: #ffc02e; color: #1a1205; font-size: 10px; font-weight: 800; border-radius: 4px; padding: 1px 5px; }
+/* tutorial */
+.tutorial { position: fixed; inset: 0; z-index: 30; }
+.tutorial .tutBlock { position: absolute; inset: 0; }                 /* blocks clicks on the app while the tour runs */
+.tutorial.dim .tutBlock { background: rgba(0, 0, 0, 0.6); }
+.tutSpot { position: absolute; border-radius: 10px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6), 0 0 0 3px #ffc02e inset, 0 0 18px 4px rgba(255, 192, 46, 0.55);
+  pointer-events: none; transition: all 0.25s ease; }
+.tutCard { position: absolute; padding: 14px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 192, 46, 0.5); transition: left 0.25s ease, top 0.25s ease; }
+.tutTitle { font-weight: 800; font-size: 17px; }
+.tutText { line-height: 1.45; font-size: 14px; }
+.tutButtons { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.tutButtons button { flex-direction: row; font-size: 14px; padding: 8px 12px; }
+.tutButtons .tutSkip { background: none; border: none; color: #9aa4b1; padding: 8px 4px; font-size: 13px; }
+.tutButtons button:disabled { opacity: 0.4; }
+.tutGap { flex: 1; }

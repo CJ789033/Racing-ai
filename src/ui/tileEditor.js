@@ -224,6 +224,14 @@ export class TileEditor {
   }
 
   // ------------------------------------------------------------ input
+  /** The grid's rectangle on screen (CSS pixels), clipped to the canvas. */
+  gridScreenRect() {
+    const r = this.canvas.getBoundingClientRect(), k = 1 / this.dpr;
+    const left = Math.max(r.left, r.left + this.originX * k), top = Math.max(r.top, r.top + this.originY * k);
+    const right = Math.min(r.right, r.left + (this.originX + COLS * this.cellPx) * k), bottom = Math.min(r.bottom, r.top + (this.originY + ROWS * this.cellPx) * k);
+    return { left, top, right, bottom, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+  }
+
   /** Is the pointer over the palette (the part selector)? Dropping grid pieces there deletes them. */
   overPalette(x, y) {
     const pr = this.palette.getBoundingClientRect();
