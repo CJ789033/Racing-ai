@@ -8,6 +8,7 @@ import { Tutorial } from './ui/tutorial.js';
 import { encodeTrack, decodeTrack } from './ui/trackCode.js';
 import { DevMenu } from './ui/devMenu.js';
 import { DebugViz } from './render/debugViz.js';
+import { startUpdateCheck } from './ui/updateCheck.js';
 import { Scene3D } from './render/scene3d.js';
 import { TrackEditor } from './ui/editor.js';
 import { TileEditor } from './ui/tileEditor.js';
@@ -719,6 +720,8 @@ window.__tutorial = tutorial; // for automated tests
 const debugViz = new DebugViz(scene);
 const devMenu = new DevMenu(() => ({ state, scene, tileEditor, speed: SPEEDS[state.speedIdx], saveKey: SAVE_KEY, currentDef }), debugViz);
 window.__dev = devMenu; // for automated tests: __dev.unlock(), __dev.key('F3'), __dev.report()
+// "new version available" banner (real website only); saves before reloading
+window.__updateCheck = startUpdateCheck({ beforeReload: () => save() });
 function tutorialDone() { try { return !!localStorage.getItem(TUTORIAL_KEY); } catch { return true; } }
 $('iTutorial').onclick = () => { $('settings').classList.add('hidden'); tutorial.start(); };
 

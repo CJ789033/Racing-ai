@@ -118,6 +118,9 @@ export const CHANGELOG = [
     'Repeatable runs (on by default, in ⚙️ AI settings): the same seed always plays out exactly the same – press 🎲 New seed for a different run',
     'If the game ever hits an error, a message offers to copy a report you can send so it can be fixed',
   ] },
+  { id: 30, date: '2026-11-04', title: '✨ Update notice', items: [
+    'When a new version of the game comes out while you have it open, a message offers to reload – your tracks and AI progress are kept',
+  ] },
 ];
 
 export const LATEST_ID = CHANGELOG[CHANGELOG.length - 1].id;

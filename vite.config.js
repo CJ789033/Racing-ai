@@ -4,12 +4,21 @@ import { execSync } from 'node:child_process';
 // Which code is running (shown in the developer menu: ↑ ↑ ↓ ← →)
 let commit = 'unknown';
 try { commit = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { /* not a git checkout */ }
+const builtAt = new Date().toISOString();
 
 export default defineConfig({
   base: './',
   build: { outDir: 'dist', chunkSizeWarningLimit: 1000 },
   define: {
     __BUILD_COMMIT__: JSON.stringify(commit),
-    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    __BUILD_TIME__: JSON.stringify(builtAt),
   },
+  plugins: [{
+    // version.json next to the page: the game compares it with its own build to offer a reload
+    name: 'version-file',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ commit, built: builtAt }) });
+    },
+  }],
 });

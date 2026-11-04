@@ -4,16 +4,14 @@
 
 import { RAY_ANGLES, LOOKAHEAD, RADAR_ZONES, INPUT_SIZE } from '../sim/car.js';
 import { LATEST_ID } from '../changelog.js';
+import { BUILD } from '../build.js';
 import { OVERLAYS } from '../render/debugViz.js';
 import { encodeTrack, encodeTrackSync, cleanDef } from './trackCode.js';
 import { rngState } from '../sim/rng.js';
 
 const SEQUENCE = ['up', 'up', 'down', 'left', 'right'];
 const KEYS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
-const BUILD = {
-  commit: typeof __BUILD_COMMIT__ !== 'undefined' ? __BUILD_COMMIT__ : 'dev',
-  time: typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : 'dev server',
-};
+
 
 // names for the racers' brain inputs, in order
 const INPUT_NAMES = [

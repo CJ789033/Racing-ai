@@ -38,6 +38,9 @@ New players get a guided tour (`src/ui/tutorial.js`, steps in `src/main.js`): ea
 ### 🎲 Repeatable runs
 All simulation randomness comes from one seedable generator (`src/sim/rng.js`). With **Repeatable runs** on (default, seed 1) the same track + settings + seed always plays out exactly the same – including the police – so a run can be reproduced from its seed; **🎲 New seed** picks another. The random state is saved with the game, so a saved run carries on exactly. Switching tracks still starts from the best brain so far; **Reset AI** starts the seed's run from scratch.
 
+### ✨ Update notice
+Each build writes `version.json` (commit + build time) next to the page. On the real website the game fetches it every 5 minutes, shortly after opening and when the tab comes back into view; if it names a different build than the one running, a banner offers **Reload** (saves first) or **Later** (hidden until the next version). Off on localhost and in artifacts (add `?updatecheck` to the URL to test it). Code: `src/ui/updateCheck.js`.
+
 ### ⚠️ Crash alert
 If the game hits a script error, a banner offers to copy the debug report.
 

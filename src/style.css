@@ -193,3 +193,7 @@ input[type=range] { width: 130px; accent-color: #ff8a1f; }
   width: max-content; max-width: calc(100vw - 32px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 12px;
   background: #5a1620; border: 1px solid #ff5a70; border-radius: 10px; color: #fff; font-size: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.45); }
 .crashBanner button { flex-direction: row; font-size: 13px; padding: 7px 11px; }
+.updateBanner { position: fixed; z-index: 44; left: 50%; transform: translateX(-50%); top: calc(12px + env(safe-area-inset-top, 0px));
+  width: max-content; max-width: calc(100vw - 32px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 12px;
+  background: #17324d; border: 1px solid #3fa7ff; border-radius: 10px; color: #fff; font-size: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.45); }
+.updateBanner button { flex-direction: row; font-size: 13px; padding: 7px 11px; }
