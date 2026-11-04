@@ -329,7 +329,7 @@ export class TileEditor {
         // touch screens: double-tap to place, so zooming / panning never drops pieces by accident
         const now = performance.now(), last = this.lastTap;
         this.lastTap = { c: p.cell.c, r: p.cell.r, t: now };
-        if (!last || now - last.t > 450 || last.c !== p.cell.c || last.r !== p.cell.r) { this.onMessage('Double-tap to place the piece here'); return; }
+        if (!last || now - last.t > 450 || last.c !== p.cell.c || last.r !== p.cell.r) { this.onMessage('Double-tap to place the piece here', { hint: 'doubleTap' }); return; }
         this.lastTap = null;
       }
       const tile = this.clampToGrid({ ...(this.paletteSel.tile || { type: this.paletteSel.type }), rot: 0, c: p.cell.c, r: p.cell.r });

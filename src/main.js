@@ -32,7 +32,7 @@ window.__evo = () => state.evo; // ditto
 const editor = new TrackEditor($('editorCanvas'), { onChange: updateEditorInfo });
 const tileEditor = new TileEditor($('tileCanvas'), $('palette'), $('props'), {
   onChange: ed => { updateEditorInfo(ed); layoutTileUI(); },
-  onMessage: msg => toast(msg),
+  onMessage: (msg, opts = {}) => opts.hint ? hintToast(opts.hint, msg) : toast(msg),
   getReserved: () => layoutTileUI(),
 });
 
@@ -448,11 +448,38 @@ $('sClose').onclick = async () => {
 };
 
 let toastTimer = null;
-function toast(msg) {
+function toast(msg, { action = null, duration = 2200 } = {}) {
   const t = $('toast');
   t.textContent = msg; t.classList.remove('hidden'); t.style.opacity = 1;
+  t.classList.toggle('withAction', !!action);
+  if (action) {
+    const b = document.createElement('button');
+    b.textContent = action.label;
+    b.onclick = e => { e.stopPropagation(); action.onClick(); hideToast(); };
+    t.appendChild(b);
+  }
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.style.opacity = 0; setTimeout(() => t.classList.add('hidden'), 400); }, 2200);
+  toastTimer = setTimeout(hideToast, duration);
+}
+function hideToast() {
+  const t = $('toast');
+  clearTimeout(toastTimer);
+  t.style.opacity = 0;
+  toastTimer = setTimeout(() => { t.classList.add('hidden'); t.classList.remove('withAction'); }, 400);
+}
+
+// Tips with a "Don't show again" button (remembered on this device)
+const HINTS_KEY = 'racing-ai-hidden-hints';
+function hiddenHints() { try { return JSON.parse(localStorage.getItem(HINTS_KEY)) || {}; } catch { return {}; } }
+function hintToast(id, msg) {
+  if (hiddenHints()[id]) return;
+  toast(msg, {
+    duration: 4500,
+    action: {
+      label: "Don't show again",
+      onClick: () => { const h = hiddenHints(); h[id] = true; try { localStorage.setItem(HINTS_KEY, JSON.stringify(h)); } catch { /* storage blocked */ } },
+    },
+  });
 }
 
 // ---------------------------------------------------------------- main loop
