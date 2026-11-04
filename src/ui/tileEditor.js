@@ -63,7 +63,7 @@ export class TileEditor {
       tabs.appendChild(b);
     }
     this.palette.appendChild(tabs);
-    const grid = document.createElement('div'); grid.className = 'paletteGrid';
+    const grid = document.createElement('div'); grid.className = 'paletteGrid' + (this.tab === 'road' ? '' : ' many');
     this.palette.appendChild(grid);
     this.paletteItems = [];
     const add = (kind, key, label, start, drawIcon) => {
@@ -940,6 +940,21 @@ export function drawObstacle(ctx, tile, map, k, width, rev, alpha = 1, badge = 0
       const x = (-L.a + (j + 0.5) * 2 * L.a / n) * k, r = Math.min(L.b, 2 * L.a / n) * k * 0.45;
       ctx.beginPath(); ctx.moveTo(x - d * r, -L.b * k * 0.8); ctx.lineTo(x + d * r, 0); ctx.lineTo(x - d * r, L.b * k * 0.8); ctx.lineTo(x - d * r * 0.2, 0); ctx.fill();
     }
+  } else if (o.type === 'spinner') {
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = Math.max(1, 0.25 * k); ctx.setLineDash([2 * k, 2 * k]);
+    ctx.beginPath(); ctx.arc(0, 0, L.arm * k, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = '#f97316'; ctx.save(); ctx.rotate(0.6); ctx.fillRect(-L.arm * k, -0.35 * k, 2 * L.arm * k, 0.7 * k); ctx.restore();
+    ctx.fillStyle = '#374151'; ctx.beginPath(); ctx.arc(0, 0, 1 * k, 0, Math.PI * 2); ctx.fill();
+  } else if (o.type === 'laser') {
+    ctx.strokeStyle = '#ff1f3d'; ctx.lineWidth = Math.max(1.5, 0.5 * k); ctx.setLineDash([1.5 * k, 1 * k]);
+    ctx.beginPath(); ctx.moveTo(0, -L.b * k); ctx.lineTo(0, L.b * k); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = '#4b5563'; for (const sy of [-1, 1]) ctx.fillRect(-0.4 * k, sy * (L.b + 0.6) * k - 0.4 * k, 0.8 * k, 0.8 * k);
+  } else if (o.type === 'mud') {
+    ctx.fillStyle = 'rgba(94,62,32,0.9)';
+    ctx.beginPath(); ctx.ellipse(0, 0, L.a * k, L.b * k, 0, 0, Math.PI * 2); ctx.fill();
+  } else if (o.type === 'bumper') {
+    ctx.fillStyle = '#dc2626'; ctx.beginPath(); ctx.arc(0, 0, L.r * k, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1, 0.3 * k); ctx.stroke();
   } else if (o.type === 'hammer') {
     ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.setLineDash([2 * k, 2 * k]); ctx.lineWidth = Math.max(1, 0.3 * k);
     ctx.beginPath(); ctx.moveTo(0, -L.amp * k); ctx.lineTo(0, L.amp * k); ctx.stroke(); ctx.setLineDash([]);

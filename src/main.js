@@ -26,6 +26,7 @@ const state = {
 };
 
 const scene = new Scene3D($('view3d'));
+window.__scene = scene; // handy for automated tests
 const editor = new TrackEditor($('editorCanvas'), { onChange: updateEditorInfo });
 const tileEditor = new TileEditor($('tileCanvas'), $('palette'), $('props'), {
   onChange: ed => { updateEditorInfo(ed); layoutTileUI(); },

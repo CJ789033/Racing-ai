@@ -42,6 +42,9 @@ export const PIECES = {
   tee:        { label: 'T junction', params: {}, junction: true, desc: 'Three-way junction – the AI picks a route' },
   yfork:      { label: 'Y fork',     params: {}, junction: true, desc: 'Road splits in two – the AI picks a route' },
   roundabout: { label: 'Roundabout', params: {}, junction: true, desc: 'Four exits around a ring – the AI picks a route' },
+  bigRoundabout: { label: 'Big roundabout', params: {}, junction: true, desc: 'A wide, fast ring with four exits (5×5 cells)' },
+  crossroads: { label: 'Crossroads', params: {}, junction: true, desc: 'Four-way junction – cars can go straight or turn' },
+  trident:    { label: '3-way fork', params: {}, junction: true, desc: 'The road splits three ways – left, straight on and right' },
 };
 
 /** Palette entries (Tunnel is a straight with the tunnel switched on). */
@@ -50,7 +53,7 @@ export const PALETTE = {
     { type: 'start' }, { type: 'straight' }, { type: 'corner' }, { type: 'chicane' },
     { type: 'bridge' }, { type: 'straight', label: 'Tunnel', extra: { tunnel: 1 } },
   ],
-  junctions: [{ type: 'cross' }, { type: 'tee' }, { type: 'yfork' }, { type: 'roundabout' }],
+  junctions: [{ type: 'cross' }, { type: 'crossroads' }, { type: 'tee' }, { type: 'yfork' }, { type: 'trident' }, { type: 'roundabout' }, { type: 'bigRoundabout' }],
 };
 
 const WIDTH = { label: 'Width', options: ['narrow', 'normal', 'wide', 'full'], default: 'normal', names: ['Narrow', 'Normal', 'Wide', 'Full'] };
@@ -67,8 +70,14 @@ export const OBSTACLE_TYPES = {
             params: { strength: STRENGTH, width: { ...WIDTH, default: 'full' } } },
   slow:   { label: 'Slow pad',  icon: '🐢', desc: 'Lowers the car\'s speed level by its strength (min −4). Resets every generation.',
             params: { strength: STRENGTH, width: { ...WIDTH, default: 'full' } } },
+  spinner: { label: 'Spinner', icon: '🌀', desc: 'A bar spinning across the road – fatal. Time it or squeeze past the ends.', noLane: true,
+             params: { speed: { label: 'Spin speed', options: ['slow', 'normal', 'fast'], default: 'normal', names: ['Slow', 'Normal', 'Fast'] } } },
+  laser:  { label: 'Laser gate', icon: '⚡', desc: 'A laser across the road that switches on and off – fatal while on.', noLane: true,
+            params: { speed: { label: 'Switching', options: ['slow', 'normal', 'fast'], default: 'normal', names: ['Slow', 'Normal', 'Fast'] } } },
+  mud:    { label: 'Mud', icon: '🟫', desc: 'Thick mud – cars slow right down while driving through it.', params: { width: WIDTH } },
+  bumper: { label: 'Bumper', icon: '🔴', desc: 'A springy post that bounces cars sideways (not fatal).', params: {} },
 };
-export const OBSTACLE_ORDER = ['hammer', 'spikes', 'crates', 'oil', 'ramp', 'boost', 'slow'];
+export const OBSTACLE_ORDER = ['hammer', 'spikes', 'crates', 'oil', 'ramp', 'boost', 'slow', 'spinner', 'laser', 'mud', 'bumper'];
 export const LANES = ['left', 'center', 'right'];
 
 export function paramValue(tile, name) {
@@ -147,10 +156,40 @@ function baseShape(tile) {
         ],
       };
     }
+    case 'crossroads': {
+      const m = { x: H2, z: H2 };
+      return {
+        w: 1, h: 1, nodes: 5, junction: true,
+        ports: [{ x: 0, y: 0, e: 3 }, { x: 0, y: 0, e: 1 }, { x: 0, y: 0, e: 0 }, { x: 0, y: 0, e: 2 }],
+        edges: [
+          { a: 0, b: 4, f: line({ x: 0, z: H2 }, m), len: H2 },
+          { a: 4, b: 1, f: line(m, { x: C, z: H2 }), len: H2 },
+          { a: 2, b: 4, f: line({ x: H2, z: 0 }, m), len: H2 },
+          { a: 4, b: 3, f: line(m, { x: H2, z: C }), len: H2 },
+        ],
+      };
+    }
+    case 'trident': {
+      // stem enters the middle bottom cell; branches leave through the top of all three columns
+      const F = { x: 1.5 * C, z: 2 * C - 10 }, L = F.z;
+      const sway = dx => u => ({ x: F.x + dx * (1 - Math.cos(Math.PI * u)) / 2, z: F.z - L * u, h: 0 });
+      return {
+        w: 3, h: 2, nodes: 5, junction: true,
+        ports: [{ x: 1, y: 1, e: 2 }, { x: 0, y: 0, e: 0 }, { x: 1, y: 0, e: 0 }, { x: 2, y: 0, e: 0 }],
+        edges: [
+          { a: 0, b: 4, f: line({ x: F.x, z: 2 * C }, F), len: 10 },
+          { a: 4, b: 1, f: sway(-C), len: L * 1.15 },
+          { a: 4, b: 2, f: line(F, { x: F.x, z: 0 }), len: L },
+          { a: 4, b: 3, f: sway(C), len: L * 1.15 },
+        ],
+      };
+    }
+    case 'bigRoundabout':
     case 'roundabout': {
-      const c = 1.5 * C, R = RING_R, P = Math.PI;
-      const ports = [{ x: 1, y: 0, e: 0 }, { x: 2, y: 1, e: 1 }, { x: 1, y: 2, e: 2 }, { x: 0, y: 1, e: 3 }];
-      const portPt = [{ x: c, z: 0 }, { x: 3 * C, z: c }, { x: c, z: 3 * C }, { x: 0, z: c }];
+      const big = tile.type === 'bigRoundabout', n = big ? 5 : 3, mid = (n - 1) / 2;
+      const c = n / 2 * C, R = big ? 48 : RING_R, P = Math.PI;
+      const ports = [{ x: mid, y: 0, e: 0 }, { x: n - 1, y: mid, e: 1 }, { x: mid, y: n - 1, e: 2 }, { x: 0, y: mid, e: 3 }];
+      const portPt = [{ x: c, z: 0 }, { x: n * C, z: c }, { x: c, z: n * C }, { x: 0, z: c }];
       const ang = [-P / 2, 0, P / 2, P]; // where each arm meets the ring
       const edges = [];
       for (let i = 0; i < 4; i++) {
@@ -158,7 +197,7 @@ function baseShape(tile) {
         edges.push({ a: i, b: 4 + i, f: line(portPt[i], j), len: c - R });
         edges.push({ a: 4 + i, b: 4 + (i + 1) % 4, f: arc(c, c, R, ang[i], ang[i] + P / 2), len: R * P / 2 });
       }
-      return { w: 3, h: 3, nodes: 8, junction: true, ports, edges, island: { x: c, z: c, r: R } };
+      return { w: n, h: n, nodes: 8, junction: true, ports, edges, island: { x: c, z: c, r: R } };
     }
     default: { // start, straight, chicane
       const n = paramValue(tile, 'len'), L = n * C;
@@ -483,6 +522,25 @@ export const TILE_PRESETS = {
       { type: 'roundabout', rot: 0, c: 4, r: 3 },
       ...buildFromTurtle([7, 4], E, [['straight', { len: 2 }], ['corner', { size: 1 }, 'L'], ['straight', { len: 1 }], ['corner', { size: 1 }, 'L'], ['straight', { len: 3 }], ['corner', { size: 1 }, 'L']]),
       ...buildFromTurtle([5, 6], 2, [['straight', { len: 1 }], ['corner', { size: 1 }, 'R'], ['straight', { len: 2 }], ['corner', { size: 1 }, 'R'], ['straight', { len: 2 }], ['corner', { size: 1 }, 'R'], ['start', { len: 1 }]]),
+    ],
+  },
+  'Gauntlet': {
+    width: 13,
+    tiles: () => buildFromTurtle([4, 8], E, [
+      ['start', { len: 2 }], ['straight', { len: 2 }, null, { type: 'spinner', pos: 0.5, speed: 'slow' }],
+      ['straight', { len: 1 }, null, { type: 'laser', pos: 0.5, speed: 'normal' }], ['corner', { size: 2 }, 'L'],
+      ['straight', { len: 3 }, null, { type: 'mud', lane: 'center', pos: 0.5, width: 'wide' }], ['corner', { size: 2 }, 'L'],
+      ['straight', { len: 3 }, null, { type: 'bumper', lane: 'right', pos: 0.5 }],
+      ['straight', { len: 2 }, null, { type: 'crates', lane: 'left', pos: 0.5 }], ['corner', { size: 2 }, 'L'],
+      ['straight', { len: 3 }], ['corner', { size: 2 }, 'L'],
+    ]),
+  },
+  'Big roundabout': {
+    width: 12,
+    tiles: () => [
+      { type: 'bigRoundabout', rot: 0, c: 2, r: 2 },
+      ...buildFromTurtle([7, 4], E, [['start', { len: 1 }], ['straight', { len: 1 }], ['corner', { size: 1 }, 'L'], ['straight', { len: 2 }], ['corner', { size: 1 }, 'L'], ['straight', { len: 4 }], ['corner', { size: 1 }, 'L']]),
+      ...buildFromTurtle([4, 7], 2, [['corner', { size: 1 }, 'R'], ['straight', { len: 2 }], ['corner', { size: 1 }, 'R'], ['straight', { len: 2 }], ['corner', { size: 1 }, 'R']]),
     ],
   },
 };

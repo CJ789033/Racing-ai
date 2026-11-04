@@ -2,6 +2,7 @@
 
 import { NeuralNet, gaussian } from './nn.js';
 import { Car, INPUT_SIZE, OUTPUT_SIZE } from './car.js';
+import { resetObstacles } from './obstacles.js';
 
 export const DEFAULT_SETTINGS = {
   populationSize: 50,
@@ -33,6 +34,7 @@ export class Evolution {
     this.stagnation = 0;
     this.time = 0;
 
+    resetObstacles(track.obstacles);
     const n = this.settings.populationSize;
     const genomes = [];
     for (let i = 0; i < n; i++) {
@@ -125,6 +127,7 @@ export class Evolution {
       next.push(child);
     }
 
+    resetObstacles(this.track.obstacles); // smashed crates are rebuilt for the next generation
     this.cars.forEach((car, i) => {
       car.brain.genome = next[i];
       car.isElite = i < this.eliteCount;

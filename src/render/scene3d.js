@@ -6,7 +6,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { CAR, RAY_ANGLES } from '../sim/car.js';
-import { hammerLat } from '../sim/obstacles.js';
+import { hammerLat, spinnerBar, laserOn } from '../sim/obstacles.js';
 
 // The road surface sits a little above its centreline height, with raised kerbs
 export const ROAD_Y = 0.22, KERB_Y = 0.36, KERB_W = 1.2;
@@ -36,6 +36,19 @@ function padTexture(type, strength) {
     x.fill();
   }
   return (padTex[k] = new THREE.CanvasTexture(cv));
+}
+
+let mudTex = null;
+function mudTexture() {
+  if (mudTex) return mudTex;
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const x = cv.getContext('2d');
+  let seed = 7; const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 90; i++) {
+    x.fillStyle = `rgba(${70 + r() * 40},${45 + r() * 25},${20 + r() * 15},${0.55 + r() * 0.4})`;
+    x.beginPath(); x.ellipse(10 + r() * 108, 10 + r() * 108, 8 + r() * 22, 6 + r() * 16, r() * 3, 0, Math.PI * 2); x.fill();
+  }
+  return (mudTex = new THREE.CanvasTexture(cv));
 }
 
 let stripeTex = null;
@@ -165,6 +178,11 @@ export class Scene3D {
       const P = (i, off, y) => [track.cx[i] + track.nx[i] * off * side, track.ch[i] + y, track.cz[i] + track.nz[i] * off * side];
       const quad = (a, b, c, d, colr) => { pos.push(...a, ...b, ...c, ...a, ...c, ...d); for (let k = 0; k < 6; k++) col.push(...colr); };
       for (let i = i0; i < i1; i++) {
+        // leave the kerb out wherever another road joins here (junction mouths, roundabout arms)
+        const mx = (track.cx[i] + track.cx[i + 1]) / 2 + (track.nx[i] + track.nx[i + 1]) / 2 * (hw + 0.8) * side;
+        const mz = (track.cz[i] + track.cz[i + 1]) / 2 + (track.nz[i] + track.nz[i + 1]) / 2 * (hw + 0.8) * side;
+        const hh = track.roadHeightAt(mx, mz, (track.ch[i] + track.ch[i + 1]) / 2, 1.2);
+        if (hh === hh) continue;
         const c = Math.floor((i - i0) / 2) % 2 ? RED : WHITE;
         const inA = P(i, hw, KERB_Y), inB = P(i + 1, hw, KERB_Y), outA = P(i, hw + KERB_W, KERB_Y), outB = P(i + 1, hw + KERB_W, KERB_Y);
         quad(inA, inB, outB, outA, c);                                                  // top
@@ -182,8 +200,8 @@ export class Scene3D {
       const s = track.edgeStart[e], n = track.edgeCount[e], end = s + n - 1;
       const junction = track.junction[s] === 1;
       asphalt.push(strip(s, end, -hw, hw, ROAD_Y, ROAD_Y));
+      kerbs.push(kerbBlocks(s, end, 1), kerbBlocks(s, end, -1));
       if (!junction) {
-        kerbs.push(kerbBlocks(s, end, 1), kerbBlocks(s, end, -1));
         for (let i = s; i < end; i += 4) {
           const p = new THREE.PlaneGeometry(0.3, track.step * 1.6);
           p.rotateX(-Math.PI / 2);
@@ -191,9 +209,6 @@ export class Scene3D {
           p.translate(track.cx[i], track.ch[i] + ROAD_Y + 0.02, track.cz[i]);
           dashes.push(p);
         }
-      } else {
-        // junction roads have no kerbs: just the raised road's side faces
-        skirts.push(strip(s, end, hw, hw, -0.05, ROAD_Y), strip(s, end, -hw, -hw, -0.05, ROAD_Y));
       }
       // Bridges: deck underside, side walls, rails and pillars wherever the road is raised
       let raised = false;
@@ -457,7 +472,7 @@ export class Scene3D {
   }
 
   addObstacles(track) {
-    this.hammers = [];
+    this.hammers = []; this.crates = []; this.spinners = []; this.lasers = [];
     const metal = new THREE.MeshLambertMaterial({ color: '#9ca3af' });
     for (const o of track.obstacles) {
       const g = new THREE.Group();
@@ -473,6 +488,8 @@ export class Scene3D {
         const sp = new THREE.Mesh(mergeGeometries(cones), new THREE.MeshPhongMaterial({ color: '#e5e7eb', shininess: 80 }));
         sp.castShadow = true; g.add(sp);
       } else if (o.type === 'crates') {
+        const pieces = [];
+        this.crates.push({ o, pieces });
         const n = Math.max(1, Math.round((2 * o.b) / (2 * o.a)));
         const size = (2 * o.b) / n;
         const mat = new THREE.MeshLambertMaterial({ color: '#b7793b' });
@@ -486,6 +503,11 @@ export class Scene3D {
           const frame = new THREE.Mesh(new THREE.BoxGeometry(s2 * 1.02, s2 * 0.15, s2 * 1.02), edge);
           frame.position.copy(box.position); frame.position.y += s2 * 0.42; frame.rotation.y = box.rotation.y;
           g.add(box, frame);
+          for (const m of [box, frame]) {
+            const r = Math.random;
+            pieces.push({ m, p: m.position.clone(), r: m.rotation.clone(),
+              v: new THREE.Vector3((r() - 0.5) * 10, 4 + r() * 6, -(4 + r() * 8)), spin: new THREE.Vector3(r() * 8, r() * 8, r() * 8) });
+          }
         }
       } else if (o.type === 'ramp') {
         // wedge rising in the driving direction (local -Z here)
@@ -503,6 +525,39 @@ export class Scene3D {
         pad.geometry.rotateX(-Math.PI / 2); // texture "up" points along the driving direction
         pad.position.y = 0.1;
         g.add(pad);
+      } else if (o.type === 'spinner') {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1, 1.7, 14), new THREE.MeshLambertMaterial({ color: '#374151' }));
+        post.position.y = 0.85; post.castShadow = true; g.add(post);
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(2 * o.arm, 0.6, 0.7), new THREE.MeshLambertMaterial({ color: '#f97316' }));
+        bar.position.y = 1.1; bar.castShadow = true;
+        const stripes2 = new THREE.Mesh(new THREE.BoxGeometry(2 * o.arm * 0.98, 0.62, 0.2), new THREE.MeshLambertMaterial({ color: '#111827' }));
+        stripes2.position.y = 1.1;
+        const spin = new THREE.Group(); spin.add(bar, stripes2); g.add(spin);
+        g.rotation.y = 0; // the spinner turns in world space
+        this.spinners.push({ o, spin });
+      } else if (o.type === 'laser') {
+        const span = track.halfWidth + 1;
+        for (const sx of [-1, 1]) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.7, 2.2, 0.7), new THREE.MeshLambertMaterial({ color: '#4b5563' }));
+          post.position.set(sx * span, 1.1, 0); post.castShadow = true; g.add(post);
+        }
+        const beams = new THREE.Group();
+        for (const y of [0.55, 1.05, 1.55]) {
+          const beam = new THREE.Mesh(new THREE.BoxGeometry(2 * span, 0.12, 0.12), new THREE.MeshBasicMaterial({ color: '#ff1f3d' }));
+          beam.position.y = y; beams.add(beam);
+        }
+        g.add(beams);
+        this.lasers.push({ o, beams });
+      } else if (o.type === 'mud') {
+        const mud = new THREE.Mesh(new THREE.PlaneGeometry(2 * o.b, 2 * o.a), new THREE.MeshLambertMaterial({ map: mudTexture(), transparent: true }));
+        mud.geometry.rotateX(-Math.PI / 2); mud.position.y = 0.06; mud.receiveShadow = true;
+        g.add(mud);
+      } else if (o.type === 'bumper') {
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(o.r, o.r * 1.1, 1.1, 20), new THREE.MeshLambertMaterial({ color: '#dc2626' }));
+        base.position.y = 0.55; base.castShadow = true;
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(o.r * 0.95, 0.18, 8, 24), new THREE.MeshLambertMaterial({ color: '#f8fafc' }));
+        ring.rotation.x = Math.PI / 2; ring.position.y = 1.1;
+        g.add(base, ring);
       } else if (o.type === 'oil') {
         const slick = new THREE.Mesh(new THREE.CircleGeometry(o.r, 24), new THREE.MeshPhongMaterial({ color: '#0b0b10', shininess: 120, specular: '#6655aa' }));
         slick.rotation.x = -Math.PI / 2; slick.scale.set(1, 0.85, 1); slick.position.y = 0.09;
@@ -616,7 +671,7 @@ export class Scene3D {
     this.outlineGeo.setPositions(this.outlinePos);
     this.outlineGeo.setColors(this.outlineCol);
     const mk = (width, opacity) => new LineMaterial({ linewidth: width, vertexColors: true, transparent: true, opacity, depthTest: false, depthWrite: false });
-    this.outlineMats = [mk(6, 0.3), mk(2.5, 1)];     // soft halo + crisp line
+    this.outlineMats = [mk(4, 0.14), mk(1.8, 0.65)];  // faint halo + thin line, so the car itself stays visible
     this.outline = this.outlineMats.map((m, i) => { const l = new LineSegments2(this.outlineGeo, m); l.frustumCulled = false; l.renderOrder = 10 + i; this.scene.add(l); return l; });
     this.resize();
   }
@@ -626,13 +681,28 @@ export class Scene3D {
       const lat = hammerLat(h.o, simTime);
       h.swing.rotation.z = Math.asin(Math.max(-1, Math.min(1, lat / h.arm)));
     }
+    for (const sp of this.spinners || []) {
+      const [ax, az, bx, bz] = spinnerBar(sp.o, simTime);
+      sp.spin.rotation.y = -Math.atan2(az - bz, ax - bx);
+    }
+    for (const l of this.lasers || []) l.beams.visible = laserOn(l.o, simTime);
+    for (const c of this.crates || []) {
+      // smashed crates fly apart for a couple of seconds; rebuilt when a new generation starts
+      const t = c.o.broken ? simTime - c.o.brokenAt : -1;
+      for (const pc of c.pieces) {
+        if (t < 0) { pc.m.position.copy(pc.p); pc.m.rotation.copy(pc.r); pc.m.visible = true; continue; }
+        pc.m.visible = t < 2.5;
+        pc.m.position.set(pc.p.x + pc.v.x * t, Math.max(0.2, pc.p.y + pc.v.y * t - 4.9 * t * t), pc.p.z + pc.v.z * t);
+        pc.m.rotation.set(pc.r.x + pc.spin.x * t, pc.r.y + pc.spin.y * t, pc.r.z + pc.spin.z * t);
+      }
+    }
     const m = this._m, q = this._q, v = this._v;
     const OL = this.outlineLocal, OP = this.outlinePos, OC = this.outlineCol, per = OL.length;
     cars.forEach((c, i) => {
       // Crashed cars slide and spin out, then vanish; jumping cars fly
       const since = c.alive ? 0 : simTime - c.diedAt;
       const gone = !c.alive && since > 1.5;
-      let heading = c.heading;
+      let heading = c.heading, pitch = 0;
       if (!c.alive && c.crashed) {
         const f = (1 - Math.exp(-3 * since)) / 3;     // distance slid (decaying)
         v.set(c.x + c.vx * f, c.roadH + ROAD_Y + Math.max(0, c.y), c.z + c.vz * f);
@@ -643,7 +713,7 @@ export class Scene3D {
       if (!c.airborne && this.track) {
         // tilt with the road on slopes (tunnel ramps, bridges): nose up/down by the gradient along the heading
         const sl = this.track.slopeAt(c.seg) * (Math.cos(heading) * this.track.tx[c.seg] + Math.sin(heading) * this.track.tz[c.seg]);
-        if (sl) { this._q2.setFromAxisAngle(this._ax, Math.atan(sl)); q.multiply(this._q2); }
+        if (sl) { pitch = Math.atan(sl); this._q2.setFromAxisAngle(this._ax, pitch); q.multiply(this._q2); }
       }
       const icon = this.icons && this.icons[i];
       if (icon) {
@@ -657,7 +727,8 @@ export class Scene3D {
       this._s.setScalar(gone ? 0 : 1);
       if (c.airborne) {
         // nose follows the flight path
-        this._q2.setFromAxisAngle(this._ax, Math.atan2(c.vy, Math.max(1, c.speed)) * 0.8);
+        pitch = Math.atan2(c.vy, Math.max(1, c.speed)) * 0.8;
+        this._q2.setFromAxisAngle(this._ax, pitch);
         q.multiply(this._q2);
       }
       m.compose(v, q, this._s);
@@ -675,10 +746,14 @@ export class Scene3D {
       const col = c === leader ? COL_LEADER : c.finished ? COL_DONE : !c.alive ? COL_DEAD : c.isElite ? COL_ELITE : COL_ALIVE;
       this.bodies.setColorAt(i, col);
       const base = i * per;
-      if (c.alive && c.inTunnel) {
+      // outline only while the car is really underground (not in the open cutting at the ends)
+      if (c.alive && this.tunnelCovered && this.tunnelCovered(c.seg)) {
         const cs = Math.cos(c.heading), sn = Math.sin(c.heading), y0 = c.roadH + c.y + ROAD_Y;
+        const pc = Math.cos(pitch), ps = Math.sin(pitch);
         for (let k = 0; k < per; k += 3) {
-          const lx = OL[k], ly = OL[k + 1], lz = OL[k + 2];
+          // same nose-up/down tilt as the car body, then the heading
+          const px0 = OL[k], py0 = OL[k + 1], lz = OL[k + 2];
+          const lx = px0 * pc - py0 * ps, ly = px0 * ps + py0 * pc;
           OP[base + k] = c.x + lx * cs - lz * sn; OP[base + k + 1] = y0 + ly; OP[base + k + 2] = c.z + lx * sn + lz * cs;
           OC[base + k] = Math.min(1, col.r * 0.6 + 0.4); OC[base + k + 1] = Math.min(1, col.g * 0.6 + 0.4); OC[base + k + 2] = Math.min(1, col.b * 0.6 + 0.4);
         }
@@ -722,7 +797,15 @@ export class Scene3D {
       const up = leader.inTunnel ? 4 : 6;
       const tx = leader.x - Math.cos(leader.heading) * back, tz = leader.z - Math.sin(leader.heading) * back;
       this.followPos.lerp(this._v.set(tx, base + up, tz), k);
-      this.followPos.y = base + ROAD_Y + up; // follow height changes (tunnel ramps, bridges) without lag
+      // follow height changes (tunnel ramps, bridges) without lag, and never sink below the
+      // road under the camera itself (it sits behind the car, where a ramp may be higher)
+      let camY = base + ROAD_Y + up;
+      if (this.track) {
+        const under = this.track.roadHeightAt(this.followPos.x, this.followPos.z, base, 8);
+        if (under === under) camY = Math.max(camY, under + ROAD_Y + 2.5);
+      }
+      this.followPos.y = camY;
+      this.followLook.y = base + ROAD_Y + 1;
       this.followLook.lerp(this._v.set(leader.x + Math.cos(leader.heading) * 8, base + 1, leader.z + Math.sin(leader.heading) * 8), k);
       this.camera.position.copy(this.followPos);
       this.camera.lookAt(this.followLook);

@@ -16,7 +16,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #14171c; col
 .paletteTabs button.active { background: #2a5d8f; border-color: #3fa7ff; }
 .paletteGrid { display: grid; grid-template-columns: repeat(2, auto); gap: 4px; justify-content: center; }
 .palette.horizontal { left: 50%; transform: translateX(-50%); max-width: calc(100vw - 16px); }
-.palette.horizontal .paletteGrid { grid-template-columns: none; grid-auto-flow: column; }
+.palette.horizontal .paletteGrid { grid-template-columns: none; grid-auto-flow: column; grid-template-rows: repeat(2, auto); }
+.paletteGrid.many { grid-template-columns: repeat(3, auto); }
+.palette.horizontal .paletteGrid.many { grid-template-columns: none; }
 .paletteItem { width: 64px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px;
   border-radius: 8px; border: 2px solid transparent; cursor: grab; touch-action: none; }
 .paletteItem.obstacle { background: rgba(255,255,255,0.05); }

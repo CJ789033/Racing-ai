@@ -170,6 +170,7 @@ export class Car {
     else accel = this.throttle * c.brake;
     accel = accel * traction - (c.drag * vf * vf / 10 + (vf > 0 ? c.rolling : 0));
     vf = clamp(vf + accel * dt, 0, maxS);
+    if (this.inMud) vf *= Math.max(0, 1 - 1.6 * dt); // thick mud: heavy drag
 
     // Steering: kinematic bicycle, yaw limited by tyre grip (understeer)
     const steerAngle = this.steer * c.maxSteer / (1 + vf / 30);
@@ -200,12 +201,22 @@ export class Car {
 
     // Obstacles
     this.onOil = false;
+    this.inMud = false;
     let dead = null;
     for (const o of tr.obstacles) {
       if ((o.x - this.x) ** 2 + (o.z - this.z) ** 2 > 225 || Math.abs(o.y - this.roadH) > 2.5) { this.padInside[o.index] = 0; continue; }
       const hit = obstacleContact(o, this.x, this.z, this.time);
       if (hit === 'dead') dead = o.type;
-      else if (hit === 'solid') { this.x = px; this.z = pz; this.vx = 0; this.vz = 0; this.speed = 0; }
+      else if (hit === 'smash') { o.broken = true; o.brokenAt = this.time; dead = 'crates'; }
+      else if (hit === 'mud') this.inMud = true;
+      else if (hit === 'bump') {
+        // bounce away from the post: reflect the velocity and push the car out
+        let nx = this.x - o.x, nz = this.z - o.z; const L = Math.hypot(nx, nz) || 1; nx /= L; nz /= L;
+        const vn = this.vx * nx + this.vz * nz;
+        if (vn < 0) { this.vx -= 1.8 * vn * nx; this.vz -= 1.8 * vn * nz; }
+        this.vx += nx * 4; this.vz += nz * 4;
+        const push = o.r + 1.15 - L; if (push > 0) { this.x += nx * push; this.z += nz * push; }
+      }
       else if (hit === 'oil') this.onOil = true;
       else if (hit === 'ramp' && !dead) {
         // Launch! Faster cars and steeper ramps fly higher and further
