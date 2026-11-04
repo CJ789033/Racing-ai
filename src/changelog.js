@@ -113,6 +113,11 @@ export const CHANGELOG = [
     'Police on duty adapts: a few join first, more come on duty while the racers keep finishing, and some go off duty if nobody can finish',
     'Racers get a slightly longer head start (3 seconds)',
   ] },
+  { id: 29, date: '2026-11-04', title: '🔗 Track codes & repeatable runs', items: [
+    'Track codes: press 🔗 Code in the track builder to copy your track as text, or paste a friend’s code to load their track',
+    'Repeatable runs (on by default, in ⚙️ AI settings): the same seed always plays out exactly the same – press 🎲 New seed for a different run',
+    'If the game ever hits an error, a message offers to copy a report you can send so it can be fixed',
+  ] },
 ];
 
 export const LATEST_ID = CHANGELOG[CHANGELOG.length - 1].id;

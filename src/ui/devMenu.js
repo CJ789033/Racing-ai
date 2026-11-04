@@ -5,6 +5,8 @@
 import { RAY_ANGLES, LOOKAHEAD, RADAR_ZONES, INPUT_SIZE } from '../sim/car.js';
 import { LATEST_ID } from '../changelog.js';
 import { OVERLAYS } from '../render/debugViz.js';
+import { encodeTrack, encodeTrackSync, cleanDef } from './trackCode.js';
+import { rngState } from '../sim/rng.js';
 
 const SEQUENCE = ['up', 'up', 'down', 'left', 'right'];
 const KEYS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
@@ -24,9 +26,11 @@ const INPUT_NAMES = [
 ];
 
 const errors = [];
+let onError = null; // the crash alert (set by the DevMenu)
 function logError(kind, msg) {
   errors.push({ t: new Date().toISOString().slice(11, 19), kind, msg: String(msg).slice(0, 400) });
   if (errors.length > 30) errors.shift();
+  if (onError) try { onError(kind, msg); } catch { /* never let the alert itself crash */ }
 }
 window.addEventListener('error', e => logError('error', `${e.message} (${(e.filename || '').split('/').pop()}:${e.lineno})`));
 window.addEventListener('unhandledrejection', e => logError('promise', e.reason && (e.reason.stack || e.reason.message) || e.reason));
@@ -57,7 +61,26 @@ export class DevMenu {
     root.querySelector('.devClose').onclick = () => this.toggle(false);
     root.querySelector('.devCopy').onclick = () => this.copy();
 
-    // F1–F6 visual debugging (after the menu has been unlocked)
+    // crash alert: when the game hits an error, offer to copy the debug report
+    const banner = this.banner = document.createElement('div');
+    banner.className = 'crashBanner hidden';
+    banner.innerHTML = `<span>⚠️ Something went wrong in the game. Copy the report and send it so it can be fixed.</span>
+      <button class="crashCopy">Copy report</button><button class="crashClose">Dismiss</button>`;
+    document.body.appendChild(banner);
+    banner.querySelector('.crashClose').onclick = () => { banner.classList.add('hidden'); this.crashDismissed = Date.now(); };
+    banner.querySelector('.crashCopy').onclick = async () => {
+      const b = banner.querySelector('.crashCopy'), text = this.report();
+      try { await navigator.clipboard.writeText(text); b.textContent = 'Copied ✓'; }
+      catch { this.toggle(true); this.copy(); b.textContent = 'Copy from the menu'; }
+      setTimeout(() => { b.textContent = 'Copy report'; }, 2500);
+    };
+    onError = () => {
+      // don't nag: at most once a minute after being dismissed
+      if (this.crashDismissed && Date.now() - this.crashDismissed < 60000) return;
+      banner.classList.remove('hidden');
+    };
+
+    // F1–F10 visual debugging (after the menu has been unlocked)
     this.help = document.createElement('pre');
     this.help.className = 'devHelp hidden';
     document.body.appendChild(this.help);
@@ -209,6 +232,7 @@ export class DevMenu {
         bestLap: r2(evo.bestLap), bestFitness: r2(evo.bestFitness), stagnation: evo.stagnation, eliteCount: evo.eliteCount,
         brain: evo.layers.join('-'), genomeSize: evo.cars[0] && evo.cars[0].brain.size,
         settings: { pop: S.populationSize, hidden: S.hidden.join('-'), mutationRate: S.mutationRate, mutationStrength: S.mutationStrength, roadAhead: S.roadAhead, police: S.police },
+        seed: S.seeded !== false ? S.seed : 'off (truly random)', rngState: rngState(),
         recentGenerations: evo.history.slice(-8).map(h => `g${h.generation}: ${h.bestLap ? r2(h.bestLap) + ' s' : Math.round(h.bestProgress * 100) + '%'} fin ${h.finishers}${h.busted ? ' bust ' + h.busted : ''}`),
       };
       const leader = this.focusCar(evo) || evo.leader();
@@ -242,8 +266,12 @@ export class DevMenu {
         return `#${String(i + 1).padStart(2)} ${st.padEnd(8)} ${String(Math.round(c.maxProgress / (tr ? tr.raceLength : 1) * 100)).padStart(3)}%  ${String(Math.round(c.speed * 3.6)).padStart(3)} km/h  lap ${c.lap}${c.isElite ? '  elite' : ''}${c === evo.leader() ? '  LEADER' : ''}`;
       });
     }
-    // the exact track, so it can be loaded and reproduced
-    try { out.trackDefinition = JSON.stringify(stripDef(currentDef ? currentDef() : state.def)); } catch (e) { out.trackDefinition = 'unavailable: ' + e.message; }
+    // the exact track as a track code (paste into 🔗 Code → Load to reproduce it)
+    try {
+      const def = currentDef ? currentDef() : state.def, key = JSON.stringify(cleanDef(def));
+      if (key !== this._codeKey) { this._codeKey = key; this._code = encodeTrackSync(def); encodeTrack(def).then(c => { if (this._codeKey === key) this._code = c; }); }
+      out.trackCode = this._code;
+    } catch (e) { out.trackCode = 'unavailable: ' + e.message; }
     // storage
     const store = {};
     try {

@@ -1,6 +1,8 @@
 // Tiny feed-forward neural network. The genome is a flat Float32Array of all
 // weights and biases, which is what the genetic algorithm evolves.
 
+import { random } from './rng.js';
+
 export class NeuralNet {
   /** @param {number[]} layers e.g. [11, 12, 8, 2] */
   constructor(layers, genome = null) {
@@ -61,10 +63,14 @@ export class NeuralNet {
 }
 
 let spare = null;
+/** forget the cached second value (called when a run is seeded, so it starts clean) */
+export function resetGaussian() { spare = null; }
+export function gaussianSpare() { return spare; }
+export function setGaussianSpare(v) { spare = v ?? null; }
 export function gaussian() {
   if (spare !== null) { const s = spare; spare = null; return s; }
   let u, v, s;
-  do { u = Math.random() * 2 - 1; v = Math.random() * 2 - 1; s = u * u + v * v; } while (s >= 1 || s === 0);
+  do { u = random() * 2 - 1; v = random() * 2 - 1; s = u * u + v * v; } while (s >= 1 || s === 0);
   const m = Math.sqrt(-2 * Math.log(s) / s);
   spare = v * m;
   return u * m;

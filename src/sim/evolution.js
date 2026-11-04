@@ -1,9 +1,10 @@
 // Genetic algorithm that evolves a population of neural-net drivers.
 
-import { NeuralNet, gaussian } from './nn.js';
+import { NeuralNet, gaussian, resetGaussian } from './nn.js';
 import { Car, INPUT_SIZE, BASE_INPUT_SIZE, OLD_INPUT_SIZES, OUTPUT_SIZE } from './car.js';
 import { PoliceForce } from './police.js';
 import { resetObstacles } from './obstacles.js';
+import { random, seedRandom } from './rng.js';
 
 export const DEFAULT_SETTINGS = {
   populationSize: 50,
@@ -19,6 +20,8 @@ export const DEFAULT_SETTINGS = {
   mutationStrength: 0.35, // std-dev of gaussian nudge
   tournament: 4,
   police: 0,              // number of police cars hunting the racers
+  seeded: true,           // repeatable runs: the same seed always plays out the same way
+  seed: 1,
 };
 
 export const DT = 1 / 60;
@@ -26,6 +29,9 @@ export const DT = 1 / 60;
 export class Evolution {
   constructor(track, settings = {}, seedGenome = null, policeGenomes = null) {
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
+    // every new run starts the random numbers from its seed (or truly random if switched off)
+    seedRandom(this.settings.seeded !== false ? this.settings.seed : null);
+    resetGaussian();
     this.layers = [INPUT_SIZE, ...this.settings.hidden, OUTPUT_SIZE];
     seedGenome = upgradeGenome(seedGenome, this.layers);
     this.track = track;
@@ -182,13 +188,13 @@ export class Evolution {
     this.eliteCount = next.length;
     while (next.length < S.populationSize) {
       const a = this.tournamentPick(sorted);
-      const child = Math.random() < S.crossoverRate
+      const child = random() < S.crossoverRate
         ? crossover(a.brain.genome, this.tournamentPick(sorted).brain.genome)
         : Float32Array.from(a.brain.genome);
       // Until someone can finish a lap, explore more; afterwards mostly refine
       const share = this.bestLap ? S.fineTuneShare : S.fineTuneShare * 0.6;
       const scale = this.bestLap ? S.fineTuneScale : S.fineTuneScale * 2.5;
-      const r = Math.random();
+      const r = random();
       if (r < share) this.mutate(child, S.mutationRate * scale, S.mutationStrength * scale); // fine-tune
       else if (r < share + (1 - share) * 0.7) this.mutate(child, S.mutationRate, S.mutationStrength); // normal
       else this.mutate(child, S.mutationRate * boost, S.mutationStrength * boost * 1.5); // explore
@@ -213,7 +219,7 @@ export class Evolution {
   tournamentPick(sorted) {
     let best = null;
     for (let i = 0; i < this.settings.tournament; i++) {
-      const c = sorted[Math.floor(Math.random() * sorted.length)];
+      const c = sorted[Math.floor(random() * sorted.length)];
       if (!best || c.fitness > best.fitness) best = c;
     }
     return best;
@@ -221,8 +227,8 @@ export class Evolution {
 
   mutate(g, rate, strength) {
     for (let i = 0; i < g.length; i++) {
-      if (Math.random() < rate) {
-        if (Math.random() < 0.05) g[i] = gaussian();        // occasional reset
+      if (random() < rate) {
+        if (random() < 0.05) g[i] = gaussian();        // occasional reset
         else g[i] += gaussian() * strength;
       }
     }
@@ -264,7 +270,7 @@ export function upgradeGenome(g, layers) {
 function crossover(a, b) {
   // Layer-agnostic two-point crossover keeps chunks of neighbouring weights together
   const n = a.length, child = new Float32Array(n);
-  let p1 = Math.floor(Math.random() * n), p2 = Math.floor(Math.random() * n);
+  let p1 = Math.floor(random() * n), p2 = Math.floor(random() * n);
   if (p1 > p2) [p1, p2] = [p2, p1];
   for (let i = 0; i < n; i++) child[i] = i >= p1 && i < p2 ? b[i] : a[i];
   return child;

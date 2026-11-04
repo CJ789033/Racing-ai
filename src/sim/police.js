@@ -5,6 +5,7 @@
 // learn to dodge them, the police keep getting sharper (an arms race).
 import { Car, RAY_ANGLES, RAY_LENGTH, angleDiff } from './car.js';
 import { NeuralNet, gaussian } from './nn.js';
+import { random } from './rng.js';
 
 export const POLICE_LEVELS = [
   { label: 'Off', n: 0 },
@@ -317,7 +318,7 @@ export class PoliceForce {
     this.cars.forEach((p, i) => { p.brain.genome = best[i]; p.isElite = i < this.eliteCount; p.reset(); });
     this.ghosts.forEach((p, i) => {
       let g;
-      if (Math.random() < 0.25 && parents.length > 1) g = crossover(parents[0], parents[1]);
+      if (random() < 0.25 && parents.length > 1) g = crossover(parents[0], parents[1]);
       else g = Float32Array.from(parents[i % parents.length]);
       if (i % 3 === 0) mutate(g, 0.04 * bold, 0.12 * bold);
       else if (i % 3 === 1) mutate(g, 0.1 * bold, 0.35 * bold);
@@ -335,12 +336,12 @@ function ghostCount(n) { return Math.max(8, n); }
 
 function crossover(a, b) {
   const n = a.length, out = new Float32Array(n);
-  let p1 = Math.floor(Math.random() * n), p2 = Math.floor(Math.random() * n);
+  let p1 = Math.floor(random() * n), p2 = Math.floor(random() * n);
   if (p1 > p2) [p1, p2] = [p2, p1];
   for (let i = 0; i < n; i++) out[i] = i >= p1 && i < p2 ? b[i] : a[i];
   return out;
 }
 
 function mutate(g, rate, strength) {
-  for (let i = 0; i < g.length; i++) if (Math.random() < rate) g[i] += gaussian() * strength;
+  for (let i = 0; i < g.length; i++) if (random() < rate) g[i] += gaussian() * strength;
 }

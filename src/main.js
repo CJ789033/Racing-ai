@@ -1,8 +1,11 @@
 import { Track, PRESETS, randomTrackPoints } from './sim/track.js';
 import { Evolution, DEFAULT_SETTINGS, DT, upgradeGenome } from './sim/evolution.js';
+import { newSeed, rngState, setRngState } from './sim/rng.js';
+import { gaussianSpare, setGaussianSpare } from './sim/nn.js';
 import { POLICE_LEVELS } from './sim/police.js';
 import { CHANGELOG, LATEST_ID } from './changelog.js';
 import { Tutorial } from './ui/tutorial.js';
+import { encodeTrack, decodeTrack } from './ui/trackCode.js';
 import { DevMenu } from './ui/devMenu.js';
 import { DebugViz } from './render/debugViz.js';
 import { Scene3D } from './render/scene3d.js';
@@ -156,6 +159,7 @@ function save() {
       policeGenomes: evo.police.cars.length ? evo.police.genomes : null,
       policeBusts: evo.police.totalBusts,
       policeOn: !!evo.policeOn,
+      rngState: rngState(), gaussianSpare: gaussianSpare(),
       policeOnDuty: evo.policeOnDuty || 0,
       history: evo.history.slice(-300),
     },
@@ -207,6 +211,7 @@ function startRace({ fromSave = null, reset = false } = {}) {
     });
     state.evo.policeOn = fromSave.policeOn ?? !!fromSave.bestLap; // older saves: on if they'd learned the track
     state.evo.policeOnDuty = fromSave.policeOnDuty || 0;
+    if (state.settings.seeded !== false) { setRngState(fromSave.rngState); setGaussianSpare(fromSave.gaussianSpare); }
     state.evo.syncPolice();
   } else if (reset || !state.evo || trackChanged) {
     // A new track keeps the best brain so far as a starting point (transfer learning)
@@ -409,6 +414,9 @@ function syncSettingsUI() {
   }
   $('iBrainInfo').textContent = `${state.settings.hidden.join(' → ')} thinking neurons. Bigger can learn trickier driving but takes longer to train.`;
   $('iRoadAhead').checked = state.settings.roadAhead !== false;
+  $('iSeeded').checked = state.settings.seeded !== false;
+  $('iSeed').value = state.settings.seed ?? 1;
+  $('iSeed').disabled = $('iNewSeed').disabled = state.settings.seeded === false;
   const pol = $('iPolice'); pol.innerHTML = '';
   for (const lv of POLICE_LEVELS) {
     const btn = document.createElement('button');
@@ -441,6 +449,9 @@ $('iStr').oninput = e => {
   syncSettingsUI();
 };
 $('iRoadAhead').onchange = e => { state.settings.roadAhead = e.target.checked; };
+$('iSeeded').onchange = e => { state.settings.seeded = e.target.checked; syncSettingsUI(); };
+$('iSeed').onchange = e => { state.settings.seed = Math.max(0, Math.min(999999, Math.round(Number(e.target.value) || 0))); syncSettingsUI(); };
+$('iNewSeed').onclick = () => { state.settings.seed = newSeed(); syncSettingsUI(); };
 $('iShadows').onchange = e => {
   state.shadows = e.target.checked;
   scene.renderer.shadowMap.enabled = state.shadows;
@@ -467,8 +478,9 @@ $('sClose').onclick = async () => {
   // Structural changes need a reset; offer it
   const evo = state.evo;
   const structural = evo && (evo.settings.populationSize !== state.settings.populationSize ||
-    evo.settings.hidden.join() !== state.settings.hidden.join() || (evo.settings.roadAhead !== false) !== (state.settings.roadAhead !== false));
-  if (structural && await askConfirm('Restart evolution?', 'You changed the population, brain size or road-ahead sense. These only take effect when evolution restarts.', { ok: 'Restart', danger: false })) {
+    evo.settings.hidden.join() !== state.settings.hidden.join() || (evo.settings.roadAhead !== false) !== (state.settings.roadAhead !== false) ||
+    (evo.settings.seeded !== false) !== (state.settings.seeded !== false) || (state.settings.seeded !== false && evo.settings.seed !== state.settings.seed));
+  if (structural && await askConfirm('Restart evolution?', 'You changed the population, brain size, road-ahead sense or seed. These only take effect when evolution restarts.', { ok: 'Restart', danger: false })) {
     const keepBrain = evo.settings.hidden.join() === state.settings.hidden.join();
     const seed = keepBrain ? evo.bestGenome : null;
     state.evo = new Evolution(state.track, state.settings, seed, evo.police.cars.length ? evo.police.genomes : null);
@@ -633,6 +645,27 @@ $('bNews').onclick = openNews;
 $('eNews').onclick = openNews;
 $('newsClose').onclick = () => { $('news').classList.add('hidden'); markNewsSeen(); };
 $('news').onclick = e => { if (e.target === $('news')) $('newsClose').onclick(); };
+
+// ---------------------------------------------------------------- track codes
+$('eCode').onclick = async () => {
+  $('codeMsg').textContent = ''; $('codeIn').value = ''; $('codeOut').value = 'Making the code…';
+  $('codeDlg').classList.remove('hidden');
+  $('codeOut').value = await encodeTrack(currentDef());
+};
+$('codeCopy').onclick = async () => {
+  const box = $('codeOut');
+  try { await navigator.clipboard.writeText(box.value); $('codeMsg').textContent = '✅ Code copied'; }
+  catch { box.focus(); box.select(); $('codeMsg').textContent = 'Press Ctrl+C (or long-press → Copy) to copy the selected code'; }
+};
+$('codeLoad').onclick = async () => {
+  try {
+    const def = await decodeTrack($('codeIn').value);
+    loadDefIntoEditor(def);
+    $('codeDlg').classList.add('hidden');
+    toast(activeEditor().valid ? '✅ Track loaded' : '⚠ Track loaded, but it has a problem – see the message at the top');
+  } catch (e) { $('codeMsg').textContent = '⚠ ' + e.message; }
+};
+$('codeClose').onclick = () => $('codeDlg').classList.add('hidden');
 
 // ---------------------------------------------------------------- tutorial
 const TUTORIAL_KEY = 'racing-ai-tutorial-done';

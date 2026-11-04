@@ -32,6 +32,15 @@ Turn on police in **AI** settings. Police never park (once moving they keep at l
 ### 🎓 Tutorial
 New players get a guided tour (`src/ui/tutorial.js`, steps in `src/main.js`): each step spot-lights one part of the screen – parts, grid, tools, presets, Start evolution, then the race stats, speed, brain, AI settings and the Track button – with Back / Next / Skip (keyboard: ← → Enter Esc). Phones get touch wording. Replay it from **⚙️ AI settings → 🎓 Replay tutorial**.
 
+### 🔗 Track codes
+**🔗 Code** in the track builder turns the current track into one line of text (`RAI1.` = compressed, `RAI0.` = plain) and loads a pasted one. The developer menu report includes the code too, so a bug report carries the exact layout. Code: `src/ui/trackCode.js`.
+
+### 🎲 Repeatable runs
+All simulation randomness comes from one seedable generator (`src/sim/rng.js`). With **Repeatable runs** on (default, seed 1) the same track + settings + seed always plays out exactly the same – including the police – so a run can be reproduced from its seed; **🎲 New seed** picks another. The random state is saved with the game, so a saved run carries on exactly. Switching tracks still starts from the best brain so far; **Reset AI** starts the seed's run from scratch.
+
+### ⚠️ Crash alert
+If the game hits a script error, a banner offers to copy the debug report.
+
 ### 🛠️ Developer menu
 Hidden: press **↑ ↑ ↓ ← →** (or swipe up, up, down, left, right on a touch screen). Shows the build (commit + build time, so you can tell whether the site has updated), device / GPU / FPS / simulation speed, editor and track diagnostics (roads with no way through or pointing both ways), the AI (generation, settings, why cars went out last generation), the leader's every brain input and output, each police car's state, local storage and captured script errors. It also lists every racer (state, progress, speed, lap), the time per simulation step, and the exact track definition (JSON) so a reported track can be loaded and reproduced. **[copy]** copies it all as text to paste into a bug report.
 
