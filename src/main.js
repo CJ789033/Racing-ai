@@ -259,13 +259,17 @@ $('eClear').onclick = async () => {
 $('eWidth').oninput = e => activeEditor().setWidth(Number(e.target.value));
 $('tabTiles').onclick = () => setEditorKind('tiles');
 $('tabFree').onclick = () => setEditorKind('spline');
-function setTileMode(mode) {
-  tileEditor.setMode(mode);
+function setTileMode(mode) { tileEditor.setMode(mode); }
+tileEditor.onModeChange = mode => {
   $('tDel').classList.toggle('active', mode === 'delete');
   $('tSel').classList.toggle('active', mode === 'select');
-  layoutTileUI();
-  tileEditor.resize();
-}
+  $('tPaint').classList.toggle('active', mode === 'paint');
+  requestAnimationFrame(() => { layoutTileUI(); tileEditor.resize(); });
+};
+$('tPaint').onclick = () => {
+  setTileMode(tileEditor.mode === 'paint' ? 'place' : 'paint');
+  if (tileEditor.mode === 'paint') toast('🖌️ Paint on – drag to lay road');
+};
 $('tDel').onclick = () => setTileMode(tileEditor.mode === 'delete' ? 'place' : 'delete');
 $('tSel').onclick = () => setTileMode(tileEditor.mode === 'select' ? 'place' : 'select');
 tileEditor.onExitSelect = () => setTileMode('place');

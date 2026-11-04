@@ -299,6 +299,7 @@ export class TileEditor {
       else this.emptyPress = { x: e.clientX, y: e.clientY, cell: null, noop: true };
       return;
     }
+    if (this.mode === 'paint') { this.startPaint(cell); return; }
     if (this.mode === 'select') {
       // press on a selected piece: tap = deselect, drag = move the group;
       // anywhere else: tap = toggle that piece, drag = selection box
@@ -342,6 +343,11 @@ export class TileEditor {
       this.panDrag.x = e.clientX; this.panDrag.y = e.clientY;
       return;
     }
+    if (this.paint) {
+      const cell = this.cellAt(e.clientX, e.clientY);
+      if (cell) this.paintTo(cell);
+      return;
+    }
     if (this.rotDrag) {
       const { k, px, py } = this.rotFromPointer(e);
       this.rotDrag.x = px; this.rotDrag.y = py;
@@ -380,6 +386,7 @@ export class TileEditor {
     this.pointers.delete(e.pointerId);
     if (this.pinch) { if (this.pointers.size === 0) this.pinch = null; return; } // ignore the rest of a pinch
     if (this.panDrag) { this.panDrag = null; return; }
+    if (this.paint) { this.paint = null; for (const t of this.tiles) delete t._painted; this.changed(); return; }
     if (this.emptyPress) { const p = this.emptyPress; this.emptyPress = null; this.emptyTap(p); return; }
     if (this.rotDrag) { this.rotDrag = null; this.draw(); return; }
     if (this.box) {
@@ -439,7 +446,7 @@ export class TileEditor {
     this.place(d.fromGrid ? d.tile : tile);
   }
 
-  place(tile) {
+  place(tile, { quiet = false } = {}) {
     const over = this.overlapping(tile);
     this.tiles = this.tiles.filter(t => !over.includes(t));
     if (tile.type === 'start') this.tiles = this.tiles.filter(t => t.type !== 'start');
@@ -494,9 +501,137 @@ export class TileEditor {
     this.draw();
   }
 
+  // ------------------------------------------------------------ drag place (paint)
+  /**
+   * Paint mode: drag across the grid to place pieces. With a Straight / Tunnel /
+   * Corner selected it lays a connected road (straights and corners chosen
+   * automatically from the drag direction); other pieces are stamped into every
+   * free spot the drag passes over.
+   */
+  startPaint(cell) {
+    if (this.paletteSel.kind !== 'piece') { this.onMessage('Pick a road piece to paint with'); return; }
+    const base = this.paletteSel.tile || { type: this.paletteSel.type };
+    const road = base.type === 'straight' || base.type === 'corner';
+    this.paint = { base, road, cells: [cell], dirs: [null], stamped: new Set() };
+    if (road) {
+      // starting right next to the open end of a road? line the first piece up with it
+      for (const t of this.tiles) for (const pt of pieceGeometry(t).ports) {
+        if (pt.c + DIR[pt.e][0] === cell.c && pt.r + DIR[pt.e][1] === cell.r) this.paint.dirs[0] = pt.e;
+      }
+    }
+    if (road) this.placeRoadCell(0);
+    else this.stampAt(cell);
+    this.changed({ panel: false });
+  }
+
+  paintTo(cell) {
+    const P = this.paint;
+    if (P.stopped) return;
+    let last = P.cells[P.cells.length - 1];
+    if (cell.c === last.c && cell.r === last.r) return;
+    // walk cell by cell (no diagonal jumps) towards the pointer
+    let guard = 0;
+    while ((cell.c !== last.c || cell.r !== last.r) && guard++ < 50) {
+      const dc = Math.sign(cell.c - last.c), dr = Math.sign(cell.r - last.r);
+      const next = Math.abs(cell.c - last.c) >= Math.abs(cell.r - last.r) ? { c: last.c + dc, r: last.r } : { c: last.c, r: last.r + dr };
+      const prev = P.cells[P.cells.length - 2];
+      if (prev && prev.c === next.c && prev.r === next.r) { // dragged back: undo the last cell
+        P.cells.pop(); P.dirs.pop();
+        if (P.road) { const t = this.tilesAt(last.c, last.r).find(x => x._painted); if (t) this.remove(t); this.placeRoadCell(P.cells.length - 1); }
+        last = next; continue;
+      }
+      const heading = DIR.findIndex(([x, z]) => x === next.c - last.c && z === next.r - last.r); // heading into `next`
+      if (P.road && this.tilesAt(next.c, next.r).some(x => !x._painted)) {
+        // ran into an existing piece (e.g. the Start): join the road to it and stop painting
+        P.dirs.push(heading); P.cells.push(next);
+        this.placeRoadCell(P.cells.length - 2);
+        P.cells.pop(); P.dirs.pop();
+        P.stopped = true;
+        break;
+      }
+      P.cells.push(next);
+      P.dirs.push(heading);
+      if (P.road) { this.placeRoadCell(P.cells.length - 2); this.placeRoadCell(P.cells.length - 1); }
+      else this.stampAt(next);
+      last = next;
+    }
+    this.changed({ panel: false });
+  }
+
+  /** (Re)place the road piece for path cell i from the directions in and out of it. */
+  placeRoadCell(i) {
+    const P = this.paint, cell = P.cells[i];
+    const inDir = P.dirs[i], outDir = P.dirs[i + 1] ?? null;
+    const edges = [];
+    if (inDir !== null) edges.push(opp(inDir));   // edge back towards the previous cell
+    if (outDir !== null) edges.push(outDir);      // edge towards the next cell
+    const type = edges.length === 2 && opp(edges[0]) !== edges[1] ? 'corner' : 'straight';
+    const extra = P.base.tunnel ? { tunnel: 1 } : {};
+    let tile = null;
+    for (let rot = 0; rot < 4 && !tile; rot++) {
+      const t = { type, rot, c: cell.c, r: cell.r, ...extra };
+      const pe = pieceGeometry(t).ports.map(p => p.e);
+      if (edges.every(e => pe.includes(e)) && (edges.length || rot === 0)) tile = t;
+    }
+    if (!tile) return;
+    tile._painted = true;
+    const old = this.tilesAt(cell.c, cell.r).find(x => x._painted);
+    if (old) this.remove(old);
+    this.place(tile, { quiet: true });
+  }
+
+  stampAt(cell) {
+    const P = this.paint;
+    if (this.tilesAt(cell.c, cell.r).length) return; // stamp only into free space
+    const t = this.clampToGrid({ ...P.base, rot: 0, c: cell.c, r: cell.r });
+    if (this.overlapping(t).length) return;
+    this.place(t, { quiet: true });
+  }
+
+  // ------------------------------------------------------------ copy / paste
+  copySelection() {
+    const src = this.mode === 'select' ? [...this.multi] : this.selected ? [this.selected] : [];
+    if (!src.length) { this.onMessage('Select something to copy first'); return; }
+    this.clipboard = src.map(t => JSON.parse(JSON.stringify(t, (k, v) => (k === '_painted' ? undefined : v))));
+    this.onMessage(`Copied ${src.length} piece${src.length > 1 ? 's' : ''}`);
+    this.renderPanel();
+  }
+
+  /** Paste the clipboard in the nearest free spot and select the copies so they can be dragged into place. */
+  paste() {
+    if (!this.clipboard || !this.clipboard.length) { this.onMessage('Nothing copied yet'); return; }
+    let items = this.clipboard.map(t => ({ ...t, obstacle: t.obstacle ? { ...t.obstacle } : undefined }));
+    items.forEach(t => { if (!t.obstacle) delete t.obstacle; });
+    if (this.tiles.some(t => t.type === 'start')) {
+      const n = items.length; items = items.filter(t => t.type !== 'start');
+      if (items.length < n) this.onMessage('Start piece skipped – a track can only have one');
+      if (!items.length) return;
+    }
+    const tries = [];
+    for (let rad = 1; rad <= Math.max(COLS, ROWS); rad++) for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) === rad) tries.push([dx, dy]);
+    }
+    tries.sort((a, b) => Math.hypot(a[0] - 1, a[1] - 1) - Math.hypot(b[0] - 1, b[1] - 1)); // prefer just down-right
+    for (const [dx, dy] of tries) {
+      const moved = items.map(t => ({ ...t, c: t.c + dx, r: t.r + dy }));
+      if (!moved.every(fitsGrid)) continue;
+      if (this.tiles.some(o => moved.some(m => clashes(o, m)))) continue;
+      if (moved.some((m, i) => moved.some((n, j) => j > i && clashes(m, n)))) continue;
+      this.tiles.push(...moved);
+      this.setMode('select');
+      this.multi = new Set(moved);
+      this.changed();
+      this.onMessage(`Pasted ${moved.length} piece${moved.length > 1 ? 's' : ''} – drag them into place`);
+      return;
+    }
+    this.onMessage('No free space to paste into');
+  }
+
   // ------------------------------------------------------------ bulk selection
   setMode(mode) {
     this.mode = mode;
+    this.paint = null;
+    if (this.onModeChange) this.onModeChange(mode);
     if (mode !== 'select') this.multi.clear();
     this.selected = null;
     this.bulkChanged();
@@ -546,8 +681,11 @@ export class TileEditor {
   }
 
   keyDown(e) {
-    if (this.mode !== 'select' || !this.multi.size || !this.canvas.offsetParent) return;
+    if (!this.canvas.offsetParent) return; // editor not on screen
     if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) { e.preventDefault(); this.copySelection(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) { e.preventDefault(); this.paste(); return; }
+    if (this.mode !== 'select' || !this.multi.size) return;
     const k = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
     if (k) { e.preventDefault(); this.moveGroup([...this.multi], k[0], k[1]); }
     else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.deleteSelection(); }
@@ -690,8 +828,13 @@ export class TileEditor {
     const rot = document.createElement('button'); rot.innerHTML = '⟳<small>Rotate</small>'; rot.onclick = () => this.rotate(t);
     const del = document.createElement('button'); del.innerHTML = '🗑️<small>Delete</small>';
     del.onclick = () => { this.remove(t); this.changed(); };
-    btns.append(rot, del);
+    const cp = document.createElement('button'); cp.innerHTML = '📋<small>Copy</small>'; cp.onclick = () => this.copySelection();
+    btns.append(rot, cp, del);
     P.appendChild(btns);
+    if (this.clipboard) {
+      const ps = document.createElement('button'); ps.innerHTML = `📥<small>Paste (${this.clipboard.length})</small>`; ps.onclick = () => this.paste();
+      const row = document.createElement('div'); row.className = 'propButtons'; row.appendChild(ps); P.appendChild(row);
+    }
   }
 
   renderBulkPanel() {
@@ -724,6 +867,12 @@ export class TileEditor {
       btn('🗑️<small>Delete</small>', () => this.deleteSelection(), !n),
     );
     P.appendChild(row);
+    const row2 = document.createElement('div'); row2.className = 'propButtons';
+    row2.append(
+      btn('📋<small>Copy</small>', () => this.copySelection(), !n),
+      btn(`📥<small>Paste${this.clipboard ? ` (${this.clipboard.length})` : ''}</small>`, () => this.paste(), !this.clipboard),
+    );
+    P.appendChild(row2);
   }
 
   // ------------------------------------------------------------ drawing
