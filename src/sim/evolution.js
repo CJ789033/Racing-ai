@@ -1,7 +1,8 @@
 // Genetic algorithm that evolves a population of neural-net drivers.
 
 import { NeuralNet, gaussian } from './nn.js';
-import { Car, INPUT_SIZE, OUTPUT_SIZE } from './car.js';
+import { Car, INPUT_SIZE, OLD_INPUT_SIZE, OUTPUT_SIZE } from './car.js';
+import { PoliceForce } from './police.js';
 import { resetObstacles } from './obstacles.js';
 
 export const DEFAULT_SETTINGS = {
@@ -17,14 +18,16 @@ export const DEFAULT_SETTINGS = {
   mutationRate: 0.08,     // chance each weight is mutated
   mutationStrength: 0.35, // std-dev of gaussian nudge
   tournament: 4,
+  police: 0,              // number of police cars hunting the racers
 };
 
 export const DT = 1 / 60;
 
 export class Evolution {
-  constructor(track, settings = {}, seedGenome = null) {
+  constructor(track, settings = {}, seedGenome = null, policeGenomes = null) {
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
     this.layers = [INPUT_SIZE, ...this.settings.hidden, OUTPUT_SIZE];
+    seedGenome = upgradeGenome(seedGenome, this.layers);
     this.track = track;
     this.generation = 1;
     this.history = [];          // per-generation stats
@@ -45,6 +48,21 @@ export class Evolution {
       } else genomes.push(null);
     }
     this.cars = genomes.map(g => new Car(new NeuralNet(this.layers, g || NeuralNet.randomGenome(this.layers, this.settings.initScale)), track, { roadAhead: this.settings.roadAhead }));
+    this.police = new PoliceForce(track, this.settings.police || 0, policeGenomes);
+    this.linkPolice();
+  }
+
+  linkPolice() {
+    const list = this.police.cars.length ? this.police.cars : null;
+    for (const c of this.cars) c.police = list;
+    this.police.setRacers(this.cars);
+  }
+
+  /** Change how many police cars there are (keeps their brains). */
+  setPoliceCount(n) {
+    this.settings.police = n;
+    this.police.resize(n);
+    this.linkPolice();
   }
 
   /** Cars still trying to finish their lap (finished cars drive on for show). */
@@ -71,7 +89,9 @@ export class Evolution {
   step() {
     this.time += DT;
     let alive = 0;
-    for (const c of this.cars) { c.step(DT); if (c.racing) alive++; }
+    for (const c of this.cars) c.step(DT);
+    if (this.police.cars.length) this.police.step(DT, this.cars);
+    for (const c of this.cars) if (c.racing) alive++;
     if (alive === 0 || this.time >= this.timeLimit) { this.nextGeneration(); return true; }
     return false;
   }
@@ -92,6 +112,7 @@ export class Evolution {
       bestProgress: Math.min(1, best.maxProgress / this.track.raceLength),
       bestLap: genBestLap,
       finishers: finishers.length,
+      busted: sorted.filter(c => c.busted).length,
     };
     this.history.push(stats);
     this.lastStats = stats;
@@ -127,6 +148,7 @@ export class Evolution {
       next.push(child);
     }
 
+    this.police.nextGeneration();
     resetObstacles(this.track.obstacles); // smashed crates are rebuilt for the next generation
     this.cars.forEach((car, i) => {
       car.brain.genome = next[i];
@@ -160,6 +182,24 @@ export class Evolution {
     for (let i = 0; i < maxSteps; i++) if (this.step()) return this.lastStats;
     return null;
   }
+}
+
+/** Brains saved before the police inputs existed get those inputs added with zero weight (same driving). */
+export function upgradeGenome(g, layers) {
+  if (!g) return g;
+  const size = NeuralNet.genomeSize(layers);
+  if (g.length === size) return g;
+  const oldLayers = [OLD_INPUT_SIZE, ...layers.slice(1)];
+  if (g.length !== NeuralNet.genomeSize(oldLayers)) return g;
+  const out = new Float32Array(size), nIn = layers[0], extra = nIn - OLD_INPUT_SIZE;
+  let o = 0, p = 0;
+  for (let j = 0; j < layers[1]; j++) {
+    for (let i = 0; i < OLD_INPUT_SIZE; i++) out[p++] = g[o++];
+    p += extra;
+    out[p++] = g[o++]; // bias
+  }
+  while (o < g.length) out[p++] = g[o++];
+  return out;
 }
 
 function crossover(a, b) {

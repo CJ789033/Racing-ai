@@ -23,7 +23,11 @@ export const RAY_LENGTH = 70;
 // Distances (m) to the look-ahead points on the road (along the shortest route)
 export const LOOKAHEAD = [10, 25, 45, 70];
 // Inputs: rays + speed + lateral offset + look-ahead directions + speed level + sideways slide
-export const INPUT_SIZE = RAY_ANGLES.length + 2 + LOOKAHEAD.length + 2;
+// + nearest police car (direction, closeness)
+export const INPUT_SIZE = RAY_ANGLES.length + 2 + LOOKAHEAD.length + 2 + 2;
+export const OLD_INPUT_SIZE = INPUT_SIZE - 2; // brains saved before police existed
+const POLICE_SEE = 60;     // metres – how far racers notice police cars
+const POLICE_R = 1.6;      // police cars look like a circle this big to the distance sensors
 export const OUTPUT_SIZE = 2; // steer, throttle/brake
 
 const GRAVITY = 9.81;
@@ -43,6 +47,7 @@ export class Car {
     this.roadAhead = opts.roadAhead !== false;
     this.inputs = new Float32Array(INPUT_SIZE);
     this.rays = new Float32Array(RAY_ANGLES.length);
+    this.police = null;        // police cars on track (set by the evolution)
     this.reset();
   }
 
@@ -74,6 +79,7 @@ export class Car {
     this.lapTime = null;
     this.crashed = false;
     this.stalled = false;
+    this.busted = false;
     this.diedAt = 0;
     this.onOil = false;
     this.inTunnel = false;
@@ -105,6 +111,14 @@ export class Car {
         if ((o.x - this.x) ** 2 + (o.z - this.z) ** 2 > (RAY_LENGTH + 10) ** 2 || Math.abs(o.y - this.roadH) > 2.5) continue;
         d = Math.min(d, obstacleRay(o, this.x, this.z, dx, dz, this.time, d));
       }
+      // ...and so are police cars
+      if (this.police) for (const p of this.police) {
+        if (!p.alive || Math.abs(p.roadH - this.roadH) > 2.5) continue;
+        const ox = p.x - this.x, oz = p.z - this.z, along = ox * dx + oz * dz;
+        if (along <= 0 || along - POLICE_R > d) continue;
+        const off2 = ox * ox + oz * oz - along * along;
+        if (off2 < POLICE_R * POLICE_R) d = Math.min(d, Math.max(0, along - Math.sqrt(POLICE_R * POLICE_R - off2)));
+      }
       this.rays[r] = d;
       inp[r] = d / RAY_LENGTH;
     }
@@ -123,6 +137,15 @@ export class Car {
     }
     inp[k++] = this.speedLevel / 4;
     inp[k++] = clamp(this.slip / 10, -1, 1);
+    // nearest police car: which way, and how close
+    let pd = POLICE_SEE * POLICE_SEE, pa = 0, seen = false;
+    if (this.police) for (const p of this.police) {
+      if (!p.alive || Math.abs(p.roadH - this.roadH) > 3) continue;
+      const d2 = (p.x - this.x) ** 2 + (p.z - this.z) ** 2;
+      if (d2 < pd) { pd = d2; pa = Math.atan2(p.z - this.z, p.x - this.x); seen = true; }
+    }
+    inp[k++] = seen ? angleDiff(pa, h) / Math.PI : 0;
+    inp[k++] = seen ? 1 - Math.sqrt(pd) / POLICE_SEE : 0;
     return inp;
   }
 
@@ -250,6 +273,7 @@ export class Car {
   die(reason) {
     this.alive = false;
     this.crashed = reason !== 'stopped';
+    this.busted = reason === 'busted';
     this.stalled = reason === 'stopped';
     this.killedBy = reason;
     this.diedAt = this.time;

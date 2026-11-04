@@ -194,9 +194,18 @@ export class Track {
       let best = i, bd = this.D[i] - 1e-4;
       for (let k = this.nbStart[i]; k < this.nbStart[i + 1]; k++) {
         const j = this.nbList[k];
+        if (i === this.startIndex && j === this.finishIndex) continue; // don't step back over the line
         if (this.D[j] < bd) { bd = this.D[j]; best = j; }
       }
       this.next[i] = best;
+    }
+    // where two edges join, the joining samples share a spot (same distance): hop over to the one that continues
+    for (let i = 0; i < N; i++) {
+      if (this.next[i] !== i || i === this.finishIndex) continue;
+      for (let k = this.nbStart[i]; k < this.nbStart[i + 1]; k++) {
+        const j = this.nbList[k];
+        if (Math.abs(this.D[j] - this.D[i]) < 1e-3 && this.next[j] !== j && this.next[j] !== i) { this.next[i] = j; break; }
+      }
     }
     this.next[this.finishIndex] = this.startIndex; // look ahead over the line
     this.dx = F(); this.dz = F();

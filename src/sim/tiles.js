@@ -33,7 +33,7 @@ export const PIECES = {
   start:      { label: 'Start',      params: { len: LEN([1, 2, 3]), laps: { label: 'Laps to race', options: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], default: 1 } },
                 desc: 'Start / finish line. Choose how many laps the cars must complete.' },
   straight:   { label: 'Straight',   params: { len: LEN([1, 2, 3, 4]), tunnel: TUNNEL },
-                desc: 'Tip: a tunnel 3+ long is deep enough for other roads to cross over its middle' },
+                desc: 'Tip: other roads can cross over a tunnel – just not right at its entrance' },
   corner:     { label: 'Corner',     params: { size: { label: 'Curve', options: [1, 2, 3], default: 1, names: ['Tight', 'Medium', 'Wide'] }, tunnel: TUNNEL } },
   chicane:    { label: 'Chicane',    params: { len: LEN([1, 2]), amp: { label: 'Wiggle', options: [2, 4, 6], default: 4, names: ['Gentle', 'Normal', 'Sharp'] }, tunnel: TUNNEL } },
   bridge:     { label: 'Bridge',     params: { len: LEN([3, 4, 5], 3), height: { label: 'Height', options: [5, 8, 12], default: 8, names: ['Low', 'Medium', 'High'] } },
@@ -41,7 +41,7 @@ export const PIECES = {
   deadend:    { label: 'Dead end',   params: {}, desc: 'The road just stops at a barrier – a trap for cars that take the wrong turn' },
   cross:      { label: 'Crossing',   params: {}, junction: true, desc: 'Two roads cross – cars go straight over' },
   tee:        { label: 'T junction', params: {}, junction: true, desc: 'Three-way junction – the AI picks a route' },
-  yfork:      { label: 'Y fork',     params: {}, junction: true, desc: 'Road splits in two – the AI picks a route' },
+  yfork:      { label: 'Y fork',     params: { flip: { label: 'Branch goes', options: [0, 1], default: 0, names: ['Right', 'Left'] } }, junction: true, desc: 'Road splits in two – the AI picks a route' },
   roundabout: { label: 'Roundabout', params: {}, junction: true, desc: 'Four exits around a ring – the AI picks a route' },
   bigRoundabout: { label: 'Big roundabout', params: {}, junction: true, desc: 'A wide, fast ring with four exits (5×5 cells)' },
   crossroads: { label: 'Crossroads', params: {}, junction: true, desc: 'Four-way junction – cars can go straight or turn' },
@@ -157,7 +157,7 @@ function baseShape(tile) {
       const F = { x: H2, z: 2 * C - 10 };
       const L = F.z;
       return {
-        w: 2, h: 2, nodes: 4, junction: true,
+        w: 2, h: 2, nodes: 4, junction: true, flip: !!paramValue(tile, 'flip'),
         ports: [{ x: 0, y: 1, e: 2 }, { x: 0, y: 0, e: 0 }, { x: 1, y: 0, e: 0 }],
         edges: [
           { a: 0, b: 3, f: line({ x: H2, z: 2 * C }, F), len: 10 },
@@ -236,7 +236,7 @@ const geoCache = new WeakMap();
  * -1 = deep tunnel, 0 = ground).
  */
 export function pieceGeometry(tile) {
-  const sig = JSON.stringify([tile.type, tile.rot, tile.c, tile.r, tile.len, tile.size, tile.amp, tile.height, tile.tunnel, COLS, ROWS]);
+  const sig = JSON.stringify([tile.type, tile.rot, tile.c, tile.r, tile.len, tile.size, tile.amp, tile.height, tile.tunnel, tile.flip, COLS, ROWS]);
   const cached = geoCache.get(tile);
   if (cached && cached.sig === sig) return cached.geo;
 
@@ -245,6 +245,13 @@ export function pieceGeometry(tile) {
   let ports = base.ports.map(p => ({ ...p }));
   let cells = (base.cells || (() => { const a = []; for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) a.push({ x, y, layer: 0 }); return a; })()).map(c => ({ ...c }));
   let tf = p => p;
+  if (base.flip) {
+    // mirrored piece (left/right swapped) before rotating
+    const Wm = w * CELL;
+    ports = ports.map(p => ({ x: w - 1 - p.x, y: p.y, e: p.e === 1 ? 3 : p.e === 3 ? 1 : p.e }));
+    cells = cells.map(c => ({ ...c, x: w - 1 - c.x }));
+    tf = p => ({ x: Wm - p.x, z: p.z, h: p.h });
+  }
   const rot = ((tile.rot % 4) + 4) % 4;
   for (let k = 0; k < rot; k++) {
     // rotate 90° clockwise inside a w x h box -> h x w box

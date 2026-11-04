@@ -15,6 +15,8 @@ const COL_ALIVE = new THREE.Color('#3fa7ff');
 const COL_ELITE = new THREE.Color('#b26bff');
 const COL_LEADER = new THREE.Color('#ffc02e');
 const COL_DEAD = new THREE.Color('#5a5f66');
+const COL_POLICE = new THREE.Color('#1b2233');
+const COL_POLICE_TOP = new THREE.Color('#e8ecf2');
 const COL_DONE = new THREE.Color('#38e07b');
 
 const padTex = {};
@@ -677,7 +679,9 @@ export class Scene3D {
   }
 
   /** (Re)create instanced car meshes for a population size. */
-  setPopulation(n) {
+  setPopulation(nRacers, nPolice = 0) {
+    const n = nRacers + nPolice;
+    this.nRacers = nRacers; this.nPolice = nPolice;
     if (this.bodies) { this.scene.remove(this.bodies, this.darks); this.bodies.dispose(); this.darks.dispose(); }
     const L = CAR.length, W = CAR.width;
     // Body: lower chassis + nose + cabin, oriented along +X
@@ -711,12 +715,32 @@ export class Scene3D {
       const x = cv.getContext('2d'); x.font = '52px system-ui'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(ch, 32, 36);
       return new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthTest: false });
     };
-    this.iconMats = this.iconMats || { crash: emoji('💥'), stop: emoji('💤') };
+    this.iconMats = this.iconMats || { crash: emoji('💥'), stop: emoji('💤'), busted: emoji('🚨') };
     this.icons = Array.from({ length: n }, () => {
       const sp = new THREE.Sprite(this.iconMats.crash.clone()); sp.scale.set(4, 4, 1); sp.visible = false; sp.renderOrder = 12;
-      sp.userData.mats = { crash: sp.material, stop: this.iconMats.stop.clone() }; // own materials: each fades on its own
+      sp.userData.mats = { crash: sp.material, stop: this.iconMats.stop.clone(), busted: this.iconMats.busted.clone() }; // own materials: each fades on its own
       this.scene.add(sp); return sp;
     });
+
+    // Police: white roof + flashing red / blue light bar
+    if (this.policeParts) for (const pm of this.policeParts) { this.scene.remove(pm); pm.dispose(); }
+    this.policeParts = [];
+    if (nPolice) {
+      const mk = (geo, mat) => {
+        const im = new THREE.InstancedMesh(geo, mat, nPolice);
+        im.instanceMatrix.setUsage(THREE.DynamicDrawUsage); im.frustumCulled = false;
+        this.scene.add(im); this.policeParts.push(im); return im;
+      };
+      const roof = new THREE.BoxGeometry(L * 0.47, 0.06, W * 0.84); roof.translate(-0.25, 1.4, 0);
+      const doors = new THREE.BoxGeometry(L * 0.5, 0.3, W + 0.02); doors.translate(0, 0.6, 0);
+      const red = new THREE.BoxGeometry(0.4, 0.22, 0.55); red.translate(-0.25, 1.53, 0.33);
+      const blue = new THREE.BoxGeometry(0.4, 0.22, 0.55); blue.translate(-0.25, 1.53, -0.33);
+      this.policeWhite = mk(mergeGeometries([roof, doors]), new THREE.MeshLambertMaterial({ color: COL_POLICE_TOP }));
+      this.policeRed = mk(red, new THREE.MeshBasicMaterial({ color: '#ff2a2a' }));
+      this.policeBlue = mk(blue, new THREE.MeshBasicMaterial({ color: '#2a6bff' }));
+      this.policeRedDim = mk(red, new THREE.MeshLambertMaterial({ color: '#5a1515' }));
+      this.policeBlueDim = mk(blue, new THREE.MeshLambertMaterial({ color: '#15265a' }));
+    }
 
     // Exhaust flames for cars with a raised speed level (speed pads)
     if (this.flames) { this.scene.remove(this.flames); this.flames.dispose(); }
@@ -748,7 +772,9 @@ export class Scene3D {
     this.resize();
   }
 
-  updateCars(cars, leader, dt, simTime = 0) {
+  updateCars(racers, leader, dt, simTime = 0, police = null) {
+    const cars = police && police.length && this.nPolice === police.length ? racers.concat(police) : racers;
+    const nR = racers.length;
     for (const h of this.hammers || []) {
       const lat = hammerLat(h.o, simTime);
       h.swing.rotation.z = Math.asin(Math.max(-1, Math.min(1, lat / h.arm)));
@@ -791,7 +817,7 @@ export class Scene3D {
       if (icon) {
         icon.visible = !c.alive && !gone && !c.finished;
         if (icon.visible) {
-          icon.material = c.crashed ? icon.userData.mats.crash : icon.userData.mats.stop;
+          icon.material = c.busted ? icon.userData.mats.busted : c.crashed ? icon.userData.mats.crash : icon.userData.mats.stop;
           icon.position.set(v.x, v.y + 3.5 + since * 1.5, v.z);
           icon.material.opacity = Math.max(0, 1 - since / 1.5);
         }
@@ -815,7 +841,17 @@ export class Scene3D {
       this._fp.set(v.x - Math.cos(c.heading) * this._flameBack, v.y + 0.55, v.z - Math.sin(c.heading) * this._flameBack);
       m.compose(this._fp, q, this._fs);
       this.flames.setMatrixAt(i, m);
-      const col = c === leader ? COL_LEADER : c.finished ? COL_DONE : !c.alive ? COL_DEAD : c.isElite ? COL_ELITE : COL_ALIVE;
+      if (i >= nR) {
+        // police extras follow the body; the light bar flashes red / blue
+        const k = i - nR, flash = Math.floor(simTime * 5 + k * 0.7) % 2 === 0;
+        const on = c.alive, Z = this._zero || (this._zero = new THREE.Matrix4().makeScale(0, 0, 0));
+        this.policeWhite.setMatrixAt(k, m.compose(v, q, this._s));
+        this.policeRed.setMatrixAt(k, on && flash ? m : Z);
+        this.policeRedDim.setMatrixAt(k, on && flash ? Z : m);
+        this.policeBlue.setMatrixAt(k, on && !flash ? m : Z);
+        this.policeBlueDim.setMatrixAt(k, on && !flash ? Z : m);
+      }
+      const col = i >= nR ? (c.alive ? COL_POLICE : COL_DEAD) : c === leader ? COL_LEADER : c.finished ? COL_DONE : !c.alive ? COL_DEAD : c.isElite ? COL_ELITE : COL_ALIVE;
       this.bodies.setColorAt(i, col);
       const base = i * per;
       // outline only while the car is really underground (not in the open cutting at the ends)
@@ -838,6 +874,7 @@ export class Scene3D {
     this.flames.instanceMatrix.needsUpdate = true;
     this.darks.instanceMatrix.needsUpdate = true;
     this.bodies.instanceColor.needsUpdate = true;
+    if (cars !== racers) for (const pm of this.policeParts) pm.instanceMatrix.needsUpdate = true;
 
     // Sensors of the leader
     const pos = this.rayLines.geometry.attributes.position;

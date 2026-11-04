@@ -1,5 +1,6 @@
 import { Track, PRESETS, randomTrackPoints } from './sim/track.js';
-import { Evolution, DEFAULT_SETTINGS, DT } from './sim/evolution.js';
+import { Evolution, DEFAULT_SETTINGS, DT, upgradeGenome } from './sim/evolution.js';
+import { POLICE_LEVELS } from './sim/police.js';
 import { Scene3D } from './render/scene3d.js';
 import { TrackEditor } from './ui/editor.js';
 import { TileEditor } from './ui/tileEditor.js';
@@ -27,6 +28,7 @@ const state = {
 
 const scene = new Scene3D($('view3d'));
 window.__scene = scene; // handy for automated tests
+window.__evo = () => state.evo; // ditto
 const editor = new TrackEditor($('editorCanvas'), { onChange: updateEditorInfo });
 const tileEditor = new TileEditor($('tileCanvas'), $('palette'), $('props'), {
   onChange: ed => { updateEditorInfo(ed); layoutTileUI(); },
@@ -147,6 +149,8 @@ function save() {
       bestLap: evo.bestLap,
       bestFitness: evo.bestFitness,
       bestGenome: evo.bestGenome && Array.from(evo.bestGenome),
+      policeGenomes: evo.police.cars.length ? evo.police.genomes : null,
+      policeBusts: evo.police.totalBusts,
       history: evo.history.slice(-300),
     },
   };
@@ -185,24 +189,27 @@ function startRace({ fromSave = null, reset = false } = {}) {
 
   if (fromSave) {
     state.track = newTrack;
-    state.evo = new Evolution(newTrack, state.settings, fromSave.bestGenome);
+    state.evo = new Evolution(newTrack, state.settings, fromSave.bestGenome, fromSave.policeGenomes);
+    state.evo.police.totalBusts = fromSave.policeBusts || 0;
+    const savedBest = upgradeGenome(fromSave.bestGenome && Float32Array.from(fromSave.bestGenome), state.evo.layers);
     Object.assign(state.evo, {
       generation: fromSave.generation || 1,
       bestLap: fromSave.bestLap ?? null,
       bestFitness: fromSave.bestFitness ?? -Infinity,
-      bestGenome: fromSave.bestGenome && fromSave.bestGenome.length === state.evo.cars[0].brain.size ? Float32Array.from(fromSave.bestGenome) : null,
+      bestGenome: savedBest && savedBest.length === state.evo.cars[0].brain.size ? savedBest : null,
       history: fromSave.history || [],
     });
   } else if (reset || !state.evo || trackChanged) {
     // A new track keeps the best brain so far as a starting point (transfer learning)
     const seed = !reset && state.evo ? state.evo.bestGenome : null;
+    const cops = !reset && state.evo && state.evo.police.cars.length ? state.evo.police.genomes : null;
     state.track = newTrack;
-    state.evo = new Evolution(newTrack, state.settings, seed);
+    state.evo = new Evolution(newTrack, state.settings, seed, cops);
     if (seed && !reset) toast('New track – starting from the best brain so far');
   }
 
   scene.setTrack(state.track);
-  scene.setPopulation(state.evo.cars.length);
+  scene.setPopulation(state.evo.cars.length, state.evo.police.cars.length);
   scene.renderer.shadowMap.enabled = state.shadows;
   state.mode = 'race';
   $('editor').classList.add('hidden');
@@ -380,6 +387,19 @@ function syncSettingsUI() {
   }
   $('iBrainInfo').textContent = `${state.settings.hidden.join(' → ')} thinking neurons. Bigger can learn trickier driving but takes longer to train.`;
   $('iRoadAhead').checked = state.settings.roadAhead !== false;
+  const pol = $('iPolice'); pol.innerHTML = '';
+  for (const lv of POLICE_LEVELS) {
+    const btn = document.createElement('button');
+    btn.textContent = lv.n ? `${lv.label} (${lv.n})` : lv.label;
+    btn.classList.toggle('active', (state.settings.police || 0) === lv.n);
+    btn.onclick = () => {
+      state.settings.police = lv.n;
+      // takes effect straight away – no restart needed
+      if (state.evo) { state.evo.setPoliceCount(lv.n); scene.setPopulation(state.evo.cars.length, lv.n); }
+      syncSettingsUI(); save();
+    };
+    pol.appendChild(btn);
+  }
   $('iShadows').checked = state.shadows;
   $('iSeeThrough').checked = state.seeThrough;
 }
@@ -421,8 +441,8 @@ $('sClose').onclick = async () => {
   if (structural && await askConfirm('Restart evolution?', 'You changed the population, brain size or road-ahead sense. These only take effect when evolution restarts.', { ok: 'Restart', danger: false })) {
     const keepBrain = evo.settings.hidden.join() === state.settings.hidden.join();
     const seed = keepBrain ? evo.bestGenome : null;
-    state.evo = new Evolution(state.track, state.settings, seed);
-    scene.setPopulation(state.evo.cars.length);
+    state.evo = new Evolution(state.track, state.settings, seed, evo.police.cars.length ? evo.police.genomes : null);
+    scene.setPopulation(state.evo.cars.length, state.evo.police.cars.length);
   }
   save();
 };
@@ -467,7 +487,7 @@ function frame(now) {
   }
 
   const leader = evo.leader();
-  scene.updateCars(evo.cars, leader, dt, evo.time);
+  scene.updateCars(evo.cars, leader, dt, evo.time, evo.police.cars);
 
   hudTimer -= dt;
   if (hudTimer <= 0) {
@@ -481,6 +501,12 @@ function frame(now) {
     const laps = state.track.laps;
     $('sBestLbl').textContent = laps > 1 ? `Best (${laps} laps)` : 'Best lap';
     $('sLap').textContent = leader ? `${Math.min(laps, leader.lap + (leader.finished ? 0 : 1))} / ${laps}${leader.finished ? ' 🏁' : ''}` : '–';
+    const pc = evo.police.cars.length;
+    $('rowPolice').classList.toggle('hidden', !pc); $('legPolice').classList.toggle('hidden', !pc);
+    if (pc) {
+      let now = 0; for (const c of evo.cars) if (c.busted) now++;
+      $('sPolice').textContent = `${now} now · ${evo.police.totalBusts} total`;
+    }
     const ls = evo.lastStats;
     $('sLast').textContent = ls ? (ls.bestLap ? `${ls.bestLap.toFixed(2)} s (${ls.finishers}🏁)` : `${(ls.bestProgress * 100).toFixed(0)}%`) : '–';
     if (!$('panels').classList.contains('hidden')) {

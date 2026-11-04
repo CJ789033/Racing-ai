@@ -21,6 +21,7 @@
         <div class="row"><span>Lap</span><b id="sLap">–</b></div>
         <div class="row best"><span id="sBestLbl">Best lap</span><b id="sBest">–</b></div>
         <div class="row"><span>Last gen</span><b id="sLast">–</b></div>
+        <div class="row hidden" id="rowPolice"><span>🚨 Busted</span><b id="sPolice">–</b></div>
         <div class="local small" title="All training runs on this device. No internet connection is used.">🔒 Learning on this device · offline</div>
       </div>
 
@@ -50,6 +51,7 @@
         <span><i style="background:#3fa7ff"></i>racing</span>
         <span><i style="background:#38e07b"></i>finished</span>
         <span><i style="background:#5a5f66"></i>out</span>
+        <span id="legPolice" class="hidden"><i style="background:#1b2233;border:1px solid #e8ecf2"></i>police</span>
       </div>
     </div>
 
@@ -112,6 +114,7 @@
         <label>Mutation rate <b id="vRate"></b><input id="iRate" type="range" min="0.01" max="0.4" step="0.01" /></label>
         <label>Mutation strength <b id="vStr"></b><input id="iStr" type="range" min="0.05" max="1.5" step="0.05" /></label>
         <div class="propRow"><div class="propLabel">Brain size (hidden layers)</div><div class="seg" id="iBrain"></div><div class="muted small" id="iBrainInfo"></div></div>
+ <div class="propRow"><div class="propLabel">🚓 Police</div><div class="seg" id="iPolice"></div><div class="muted small">Police cars learn to hunt the racers – touching a racer busts it. Only the best police brains are kept each generation, so the racers must keep learning to dodge them.</div></div>
         <label class="check"><input id="iRoadAhead" type="checkbox" /> Road-ahead sense – cars can tell which way the road goes (learns faster). Off = distance sensors only.</label>
         <label class="check"><input id="iShadows" type="checkbox" /> Shadows (slower on phones)</label>
         <label class="check"><input id="iSeeThrough" type="checkbox" /> See-through ground over tunnels</label>
