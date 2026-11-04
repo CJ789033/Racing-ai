@@ -655,7 +655,7 @@ $('newsClose').onclick = () => { $('news').classList.add('hidden'); markNewsSeen
 $('news').onclick = e => { if (e.target === $('news')) $('newsClose').onclick(); };
 
 // ---------------------------------------------------------------- your own car (🎮 Drive)
-const DRIVE_KEYS = { ArrowUp: 'gas', KeyW: 'gas', ArrowDown: 'brake', KeyS: 'brake', Space: 'brake', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right' };
+const DRIVE_KEYS = { ArrowUp: 'gas', KeyW: 'gas', ArrowDown: 'brake', KeyS: 'brake', Space: 'brake', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ShiftLeft: 'drift', ShiftRight: 'drift' };
 function attachPlayer() {
   if (!state.driving || !state.evo) return;
   if (!state.player || state.player.track !== state.track) { state.player = new PlayerCar(state.track); state.player.restart(); }
@@ -672,7 +672,7 @@ function setDriving(on) {
     if (scene.cameraMode === 'orbit') { scene.cycleCamera(); } // → follow
     $('camLbl').textContent = scene.cameraMode[0].toUpperCase() + scene.cameraMode.slice(1);
     if (state.paused) $('bPause').click();
-    toast('🎮 You’re in! Arrows / WASD to drive' + (matchMedia('(pointer: coarse)').matches ? ' – or the buttons on screen' : ''));
+    toast('🎮 You’re in! Arrows / WASD to drive, Shift to drift' + (matchMedia('(pointer: coarse)').matches ? ' – or the buttons on screen' : ''));
   } else {
     if (state.evo) state.evo.setPlayer(null);
     state.player = null;
@@ -710,7 +710,7 @@ function updateDriveHud() {
   $('dSpeed').textContent = `${Math.round(p.speed * 3.6)} km/h`;
   $('dMsg').textContent = !p.alive ? (p.busted ? '🚨 Busted! Back on the road in a moment…' : '💥 Crashed! Back on the road in a moment…')
     : p.finished && p.lastResult ? `Race time ${fmtTime(p.lastResult.time)}${p.lastResult.respawns ? ` (${p.lastResult.respawns} reset${p.lastResult.respawns > 1 ? 's' : ''})` : ''}${p.bestRace ? ` · your best clean race ${fmtTime(p.bestRace)}` : ''}`
-    : matchMedia('(pointer: coarse)').matches ? 'Use the buttons to drive' : 'Arrows / WASD to drive · Space to brake';
+    : matchMedia('(pointer: coarse)').matches ? 'Use the buttons to drive' : 'Arrows / WASD to drive · Space brakes · Shift drifts';
 }
 
 // ---------------------------------------------------------------- track codes

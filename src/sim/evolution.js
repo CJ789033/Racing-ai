@@ -1,7 +1,7 @@
 // Genetic algorithm that evolves a population of neural-net drivers.
 
 import { NeuralNet, gaussian, resetGaussian } from './nn.js';
-import { Car, INPUT_SIZE, BASE_INPUT_SIZE, OLD_INPUT_SIZES, OUTPUT_SIZE } from './car.js';
+import { Car, INPUT_SIZE, BASE_INPUT_SIZE, OLD_INPUT_SIZES, OUTPUT_SIZE, OLD_OUTPUT_SIZES } from './car.js';
 import { PoliceForce } from './police.js';
 import { resetObstacles } from './obstacles.js';
 import { random, seedRandom } from './rng.js';
@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const DT = 1 / 60;
+const DRIFT_START_BIAS = (globalThis.__driftTune && globalThis.__driftTune.bias) ?? -0.6; // new brains drift only now and then
 
 export class Evolution {
   constructor(track, settings = {}, seedGenome = null, policeGenomes = null) {
@@ -58,7 +59,13 @@ export class Evolution {
     this.radarIdx = [];
     for (let j = 0; j < this.layers[1]; j++) for (let i = BASE_INPUT_SIZE; i < nIn; i++) this.radarIdx.push(j * (nIn + 1) + i);
     this.cars = genomes.map(g => {
-      if (!g) { g = NeuralNet.randomGenome(this.layers, this.settings.initScale); for (const k of this.radarIdx) g[k] = 0; }
+      if (!g) {
+        g = NeuralNet.randomGenome(this.layers, this.settings.initScale);
+        for (const k of this.radarIdx) g[k] = 0;
+        // new brains start with drifting switched off (a negative bias on the drift output),
+        // so it's something evolution switches on where it pays off rather than random noise
+        if (OUTPUT_SIZE > 2) g[g.length - 1] = DRIFT_START_BIAS;
+      }
       return new Car(new NeuralNet(this.layers, g), track, { roadAhead: this.settings.roadAhead });
     });
     this.police = new PoliceForce(track, this.settings.police || 0, policeGenomes);
@@ -254,23 +261,30 @@ export class Evolution {
 }
 
 /**
- * Brains saved with fewer inputs (before police, or before the police radar) keep their
- * driving inputs; the police inputs start with zero weight (same driving without police).
+ * Brains saved with fewer inputs (before police / the police radar) or fewer outputs (before
+ * drifting) are carried over: their driving weights are kept, new inputs and outputs start
+ * with zero weight – so an old brain drives exactly as before and never drifts until it learns to.
  */
 export function upgradeGenome(g, layers) {
   if (!g) return g;
   const size = NeuralNet.genomeSize(layers);
   if (g.length === size) return g;
-  const oldIn = OLD_INPUT_SIZES.find(n => g.length === NeuralNet.genomeSize([n, ...layers.slice(1)]));
-  if (!oldIn) return g;
-  const out = new Float32Array(size), nIn = layers[0];
+  const hidden = layers.slice(1, -1), nIn = layers[0], nOut = layers[layers.length - 1];
+  let old = null;
+  for (const oi of [...OLD_INPUT_SIZES, nIn]) for (const oo of [...OLD_OUTPUT_SIZES, nOut])
+    if (!old && g.length === NeuralNet.genomeSize([oi, ...hidden, oo])) old = { oi, oo };
+  if (!old) return g;
+  const out = new Float32Array(size);
   let o = 0, p = 0;
+  // first layer: driving inputs kept, old police inputs dropped, new inputs zero
   for (let j = 0; j < layers[1]; j++) {
-    for (let i = 0; i < BASE_INPUT_SIZE; i++) out[p++] = g[o++];  // driving inputs
-    o += oldIn - BASE_INPUT_SIZE;                                  // old police inputs: dropped
-    p += nIn - BASE_INPUT_SIZE;                                    // radar inputs: zero weight
+    const keep = old.oi === nIn ? nIn : BASE_INPUT_SIZE;
+    for (let i = 0; i < keep; i++) out[p++] = g[o++];
+    o += old.oi - keep;
+    p += nIn - keep;
     out[p++] = g[o++]; // bias
   }
+  // middle layers unchanged, then the old output neurons (the new ones come last and stay zero)
   while (o < g.length) out[p++] = g[o++];
   return out;
 }

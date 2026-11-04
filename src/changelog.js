@@ -127,6 +127,11 @@ export const CHANGELOG = [
     'The police chase you too',
     'Tidier T junctions: no more stray kerbs or gaps in the road',
   ] },
+  { id: 32, date: '2026-11-04', title: '〰️ Drifting', items: [
+    'Cars can drift: the back steps out so they swing round tight corners and junctions without stopping (it costs a little speed)',
+    'The AI has a new “drift” output and learns when it pays off – brains you already trained keep driving the same and start with drifting off',
+    'When you drive: hold Shift to drift (〰️ button on phones)',
+  ] },
 ];
 
 export const LATEST_ID = CHANGELOG[CHANGELOG.length - 1].id;

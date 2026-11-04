@@ -31,7 +31,8 @@ export const INPUT_SIZE = BASE_INPUT_SIZE + RADAR_ZONES + 1;
 export const OLD_INPUT_SIZES = [BASE_INPUT_SIZE, BASE_INPUT_SIZE + 2]; // brains saved before police / before the radar
 const POLICE_SEE = 70;     // metres – how far racers notice police cars
 const POLICE_R = 1.6;      // police cars look like a circle this big to the distance sensors
-export const OUTPUT_SIZE = 2; // steer, throttle/brake
+export const OUTPUT_SIZE = 3; // steer, throttle/brake, drift
+export const OLD_OUTPUT_SIZES = [2]; // brains saved before drifting
 
 const GRAVITY = 9.81;
 const STOP_SPEED = 2;      // m/s – slower than this counts as "stopped"
@@ -41,6 +42,13 @@ const NO_PROGRESS_TIME = 10; // seconds without a new best distance -> eliminate
 export const SPEED_UP_STEP = 0.25, SPEED_DOWN_STEP = 0.18;
 const PAD_KICK = 3;        // m/s instant push per strength point of a speed pad
 const PAD_BRAKE = 0.12;    // instant speed loss per strength point of a slow pad
+// Drifting (handbrake turn), at full drift:
+const DT_ = globalThis.__driftTune || {}; // (benchmarks only)
+export const DRIFT_YAW = DT_.yaw ?? 1.0;    // can rotate twice as hard as the tyres' grip allows
+const DRIFT_SLIDE = DT_.slide ?? 0.5;       // tyres hold the car sideways half as well (it slides)
+const DRIFT_SCRUB = DT_.scrub ?? 0.12;      // loses 12 % of its speed per second while sliding
+const DRIFT_MIN_SPEED = 6;         // m/s – below this there's nothing to drift
+const DRIFT_MAX_ANGLE = 0.6;       // rad (~35°): the drift fades out as the slide angle reaches this
 
 export class Car {
   /** opts.roadAhead: give the car the "road ahead" sense (directions to points further along the route) */
@@ -62,7 +70,7 @@ export class Car {
     this.vx = 0; this.vz = 0;
     this.speed = 0;            // forward speed
     this.slip = 0;             // sideways speed
-    this.steer = 0; this.throttle = 0;
+    this.steer = 0; this.throttle = 0; this.drift = 0;
     this.seg = s; this.lateral = 0; this.roadH = tr.ch[s];
     this.progress = 0;         // metres of the current lap done (lapLength - distance left)
     this.maxProgress = 0;      // best total distance (all laps) reached so far
@@ -163,6 +171,8 @@ export class Car {
     const out = this.brain.forward(this.sense());
     this.steer = out[0];
     this.throttle = out[1];
+    // drift (handbrake turn): only a clear signal counts, so new random brains rarely drift by accident
+    this.drift = out.length > 2 ? clamp((out[2] - 0.2) / 0.8, 0, 1) : 0;
   }
 
   /** Advance physics by dt seconds. */
@@ -194,7 +204,13 @@ export class Car {
     let vf = this.vx * fx + this.vz * fz;          // forward speed
     let vl = -this.vx * fz + this.vz * fx;         // sideways speed (+ = right)
     const grip = c.grip * (this.onOil ? c.oilGrip : 1);
-    const traction = this.onOil ? 0.25 : 1;
+    // drifting: the back steps out – the car can rotate harder than its grip would allow,
+    // slides sideways and scrubs off speed, but swings round a tight corner without stopping
+    let d = !this.onOil && vf > DRIFT_MIN_SPEED ? this.drift || 0 : 0;
+    // …but only up to a slide angle of ~35°: beyond that the tyres bite again, so a drift
+    // swings the car round instead of spinning it out
+    if (d) d *= Math.max(0, 1 - Math.atan2(Math.abs(vl), Math.max(1, vf)) / DRIFT_MAX_ANGLE);
+    const traction = (this.onOil ? 0.25 : 1) * (1 - 0.3 * d);
     const maxS = c.maxSpeed * this.speedFactor;
 
     // Longitudinal
@@ -213,13 +229,15 @@ export class Car {
       // On oil the car still rotates when steered, but its momentum carries it
       // on in the old direction – it slides sideways, and a slide turns into a spin
       yawRate = yawRate * 0.8 + vl * 0.06;
-    } else if (latAcc > grip) {
-      yawRate *= grip / latAcc;
-      vf = Math.max(0, vf - (latAcc - grip) * 0.15 * dt); // scrubbing tyres costs speed
+    } else if (latAcc > grip * (1 + DRIFT_YAW * d)) {
+      const lim = grip * (1 + DRIFT_YAW * d);
+      yawRate *= lim / latAcc;
+      vf = Math.max(0, vf - (latAcc - lim) * 0.15 * dt); // scrubbing tyres costs speed
     }
+    if (d) vf *= Math.max(0, 1 - DRIFT_SCRUB * d * dt); // sliding costs speed
 
-    // Tyres fight sideways sliding (almost not at all on oil)
-    const fric = grip * dt;
+    // Tyres fight sideways sliding (almost not at all on oil, less while drifting)
+    const fric = grip * dt * (1 - DRIFT_SLIDE * d);
     vl = Math.abs(vl) <= fric ? 0 : vl - Math.sign(vl) * fric;
 
     this.vx = vf * fx - vl * fz;

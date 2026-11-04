@@ -211,3 +211,5 @@ input[type=range] { width: 130px; accent-color: #ff8a1f; }
 .drivePad button.down { background: rgba(47, 224, 122, 0.55); border-color: #2fe07a; }
 .drivePad .padGas { width: 84px; }
 @media (max-width: 640px) { .driveHud { top: auto; bottom: calc(100px + env(safe-area-inset-bottom, 0px)); } }
+.drivePad .padDrift { width: 64px; font-size: 22px; }
+@media (max-width: 400px) { .drivePad button { width: 62px; height: 66px; } .drivePad .padGas { width: 70px; } .drivePad .padDrift { width: 54px; } .drivePad .padSide { gap: 8px; } }

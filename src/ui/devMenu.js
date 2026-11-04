@@ -241,7 +241,7 @@ export class DevMenu {
           alive: leader.alive, killedBy: leader.killedBy || undefined,
           speedKmh: r1(leader.speed * 3.6), progress: r1(leader.maxProgress), lap: leader.lap, seg: leader.seg, lateral: r2(leader.lateral),
           distanceToFinish: tr ? r1(tr.D[leader.seg]) : undefined, speedLevel: leader.speedLevel, onOil: leader.onOil, inTunnel: leader.inTunnel, airborne: leader.airborne,
-          outputs: { steer: r2(leader.steer), throttle: r2(leader.throttle) },
+          outputs: { steer: r2(leader.steer), throttle: r2(leader.throttle), drift: r2(leader.drift || 0) }, slideMs: r2(leader.slip),
           inputs: Object.fromEntries(Array.from(leader.inputs).map((v, i) => [INPUT_NAMES[i] || `input ${i}`, r2(v)])),
         };
         if (leader.inputs.length !== INPUT_SIZE) out.leader.warning = `brain has ${leader.inputs.length} inputs, expected ${INPUT_SIZE}`;

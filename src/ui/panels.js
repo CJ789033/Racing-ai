@@ -34,6 +34,7 @@ export function drawNetwork(canvas, net) {
   const out = pos[L.length - 1];
   ctx.fillText('steer', out[0][0] - 9, out[0][1] + 3);
   ctx.fillText('gas', out[1][0] - 9, out[1][1] + 3);
+  if (out[2]) ctx.fillText('drift', out[2][0] - 9, out[2][1] + 3);
 }
 
 export function drawChart(canvas, history) {

@@ -10,7 +10,7 @@ export class PlayerCar extends Car {
   constructor(track) {
     super(null, track);
     this.isPlayer = true;
-    this.input = { left: false, right: false, gas: false, brake: false };
+    this.input = { left: false, right: false, gas: false, brake: false, drift: false };
     this.bestLap = null;   // best single lap (s)
     this.bestRace = null;  // best full race (all laps)
     this.respawns = 0;
@@ -38,6 +38,7 @@ export class PlayerCar extends Car {
     this.steer += Math.max(-STEER_RATE * dt, Math.min(STEER_RATE * dt, want - this.steer));
     if (!want && Math.abs(this.steer) < 0.05) this.steer = 0;
     this.throttle = i.brake ? -1 : i.gas ? 1 : 0;
+    this.drift = i.drift ? 1 : 0;
   }
 
   step(dt) {
