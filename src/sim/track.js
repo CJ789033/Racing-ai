@@ -13,6 +13,7 @@ const LEVEL_HEIGHT = 3; // road higher than this counts as the upper level
 const SEARCH_HOPS = 10; // how far (in samples) to look for the nearest road
 // height levels: 0 = ground, 1 = up on a bridge, 2 = down in a tunnel
 const levelOf = h => (h >= LEVEL_HEIGHT ? 1 : h <= -LEVEL_HEIGHT ? 2 : 0);
+const EMPTY = -32768; // no road in this height-map cell
 
 function catmullRom(p0, p1, p2, p3, t) {
   const t2 = t * t, t3 = t2 * t;
@@ -223,7 +224,10 @@ export class Track {
     const pad = hw + 4;
     this.gx0 = minX - pad; this.gz0 = minZ - pad;
     this.gw = Math.ceil((maxX - minX + 2 * pad) / RASTER); this.gh = Math.ceil((maxZ - minZ + 2 * pad) / RASTER);
-    this.grids = [0, 1, 2].map(() => new Uint8Array(this.gw * this.gh));
+    // Road height map with two layers (a road can pass over/under another):
+    // stored in centimetres, EMPTY = no road
+    this.hA = new Int16Array(this.gw * this.gh).fill(EMPTY);
+    this.hB = new Int16Array(this.gw * this.gh).fill(EMPTY);
     for (let e = 0; e < E; e++) {
       const s = this.edgeStart[e], n = this.edgeCount[e];
       for (let k = 0; k < n - 1; k++) this.rasterSegment(s + k, s + k + 1);
@@ -234,8 +238,9 @@ export class Track {
   }
 
   rasterSegment(i, j) {
-    const hw = this.halfWidth, grid = this.grids[levelOf((this.ch[i] + this.ch[j]) / 2)];
+    const hw = this.halfWidth;
     const ax = this.cx[i], az = this.cz[i], bx = this.cx[j], bz = this.cz[j];
+    const ha = this.ch[i], hb = this.ch[j];
     const sx = bx - ax, sz = bz - az, L2 = sx * sx + sz * sz || 1e-6;
     const c0 = Math.max(0, Math.floor((Math.min(ax, bx) - hw - this.gx0) / RASTER));
     const c1 = Math.min(this.gw - 1, Math.ceil((Math.max(ax, bx) + hw - this.gx0) / RASTER));
@@ -249,27 +254,50 @@ export class Track {
         let t = ((x - ax) * sx + (z - az) * sz) / L2;
         t = t < 0 ? 0 : t > 1 ? 1 : t;
         const dx = x - ax - sx * t, dz = z - az - sz * t;
-        if (dx * dx + dz * dz <= hw2) grid[r * this.gw + c] = 1;
+        if (dx * dx + dz * dz > hw2) continue;
+        const h = Math.round((ha + (hb - ha) * t) * 100), k = r * this.gw + c;
+        // same layer if the heights are close (joins, junctions), otherwise the second layer
+        if (this.hA[k] === EMPTY || Math.abs(this.hA[k] - h) < 150) { if (this.hA[k] === EMPTY || h > this.hA[k]) this.hA[k] = h; }
+        else if (this.hB[k] === EMPTY || Math.abs(this.hB[k] - h) < 150) this.hB[k] = h;
       }
     }
   }
 
-  onRoad(level, x, z) {
+  /** Height of the road at (x,z) that is closest to `near` (within tol metres), or NaN if none. */
+  roadHeightAt(x, z, near, tol = 2.5) {
     const c = Math.floor((x - this.gx0) / RASTER), r = Math.floor((z - this.gz0) / RASTER);
-    if (c < 0 || r < 0 || c >= this.gw || r >= this.gh) return false;
-    return this.grids[level][r * this.gw + c] === 1;
+    if (c < 0 || r < 0 || c >= this.gw || r >= this.gh) return NaN;
+    const k = r * this.gw + c, a = this.hA[k], b = this.hB[k];
+    const t = tol * 100, n = near * 100;
+    if (a !== EMPTY && Math.abs(a - n) <= t) return a / 100;
+    if (b !== EMPTY && Math.abs(b - n) <= t) return b / 100;
+    return NaN;
   }
 
-  /** Distance along a ray until it leaves the road (on the given level). */
-  raycast(ox, oz, dx, dz, level, maxDist) {
+  /** Is there any road at (x,z) lower than `below` metres? (used to keep bridge pillars off roads) */
+  roadBelow(x, z, below) {
+    const c = Math.floor((x - this.gx0) / RASTER), r = Math.floor((z - this.gz0) / RASTER);
+    if (c < 0 || r < 0 || c >= this.gw || r >= this.gh) return false;
+    const k = r * this.gw + c, a = this.hA[k], b = this.hB[k];
+    return (a !== EMPTY && a < below * 100) || (b !== EMPTY && b < below * 100);
+  }
+
+  /**
+   * Distance along a ray until it leaves the road. The ray follows the road
+   * surface up and down slopes, starting at height h0, and ignores roads that
+   * pass well above or below (bridges, tunnels).
+   */
+  raycast(ox, oz, dx, dz, h0, maxDist) {
     const step = 0.75;
-    let t = step;
-    for (; t < maxDist; t += step) {
-      if (!this.onRoad(level, ox + dx * t, oz + dz * t)) {
-        let lo = t - step, hi = t; // refine the edge
-        for (let k = 0; k < 3; k++) { const m = (lo + hi) / 2; if (this.onRoad(level, ox + dx * m, oz + dz * m)) lo = m; else hi = m; }
+    let h = h0;
+    for (let t = step; t < maxDist; t += step) {
+      const hh = this.roadHeightAt(ox + dx * t, oz + dz * t, h);
+      if (hh !== hh) { // NaN: left the road – refine the edge
+        let lo = t - step, hi = t;
+        for (let k = 0; k < 3; k++) { const m = (lo + hi) / 2; if (this.roadHeightAt(ox + dx * m, oz + dz * m, h) === this.roadHeightAt(ox + dx * m, oz + dz * m, h)) lo = m; else hi = m; }
         return lo;
       }
+      h = hh;
     }
     return maxDist;
   }
@@ -311,6 +339,15 @@ export class Track {
     // lateral offset relative to the driving direction (+ = driver's right)
     const lateral = (x - bpx) * -this.dz[best] + (z - bpz) * this.dx[best];
     return { index: best, t: bt, dist: Math.sqrt(bd), lateral, D };
+  }
+
+  /** Gradient of the road at sample i along its edge's point order (rise per metre). */
+  slopeAt(i) {
+    let a = i, b = i + 1;
+    if (b >= this.N || this.edgeOf[b] !== this.edgeOf[i]) { a = i - 1; b = i; }
+    if (a < 0 || this.edgeOf[a] !== this.edgeOf[b]) return 0;
+    const d = Math.hypot(this.cx[b] - this.cx[a], this.cz[b] - this.cz[a]) || 1;
+    return (this.ch[b] - this.ch[a]) / d;
   }
 
   /** Road height at sample i (+t towards i+1). */

@@ -458,9 +458,10 @@ export const TILE_PRESETS = {
     width: 12,
     tiles: () => [
       { type: 'tee', rot: 2, c: 5, r: 7 }, { type: 'tee', rot: 0, c: 5, r: 2 },
-      { type: 'straight', rot: 1, c: 5, r: 3, len: 4, obstacle: { type: 'hammer', pos: 0.5, speed: 'normal' } },
+      { type: 'straight', rot: 1, c: 5, r: 3, len: 4, obstacle: { type: 'hammer', pos: 0.5, speed: 'slow' } },
       ...buildFromTurtle([6, 7], E, [['straight', { len: 2 }], ['corner', { size: 1 }, 'L'], ['straight', { len: 4 }], ['corner', { size: 1 }, 'L'], ['straight', { len: 2 }]]),
-      ...buildFromTurtle([4, 2], 3, [['straight', { len: 1 }], ['corner', { size: 1 }, 'L'], ['straight', { len: 4 }], ['corner', { size: 1 }, 'L'], ['start', { len: 1 }]]),
+      // start line on the left side, so cars get going before the junction
+      ...buildFromTurtle([4, 2], 3, [['straight', { len: 1 }], ['corner', { size: 1 }, 'L'], ['start', { len: 1 }], ['straight', { len: 3 }], ['corner', { size: 1 }, 'L'], ['straight', { len: 1 }]]),
     ],
   },
   'Y split': {
@@ -468,7 +469,7 @@ export const TILE_PRESETS = {
     tiles: () => [
       { type: 'yfork', rot: 1, c: 4, r: 6 }, { type: 'yfork', rot: 3, c: 9, r: 6 },
       { type: 'straight', rot: 0, c: 6, r: 6, len: 3, obstacle: { type: 'hammer', pos: 0.5, speed: 'fast' } },
-      { type: 'straight', rot: 0, c: 6, r: 7, len: 3, obstacle: { type: 'boost', pos: 0.3, strength: 2, width: 'full' } },
+      { type: 'straight', rot: 0, c: 6, r: 7, len: 3, obstacle: { type: 'boost', pos: 0.3, strength: 1, width: 'full' } },
       ...buildFromTurtle([11, 7], E, [
         ['corner', { size: 1 }, 'L'], ['straight', { len: 4 }], ['corner', { size: 1 }, 'L'],
         ['straight', { len: 4 }], ['straight', { len: 4 }], ['straight', { len: 1 }], ['corner', { size: 1 }, 'L'],

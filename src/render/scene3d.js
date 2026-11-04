@@ -8,6 +8,9 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { CAR, RAY_ANGLES } from '../sim/car.js';
 import { hammerLat } from '../sim/obstacles.js';
 
+// The road surface sits a little above its centreline height, with raised kerbs
+export const ROAD_Y = 0.22, KERB_Y = 0.36, KERB_W = 1.2;
+
 const COL_ALIVE = new THREE.Color('#3fa7ff');
 const COL_ELITE = new THREE.Color('#b26bff');
 const COL_LEADER = new THREE.Color('#ffc02e');
@@ -135,7 +138,7 @@ export class Scene3D {
     const deckMat = new THREE.MeshLambertMaterial({ color: '#9aa0a8', side: THREE.DoubleSide });
     const railMat = new THREE.MeshLambertMaterial({ color: '#e5e7eb', side: THREE.DoubleSide });
     const pillarMat = new THREE.MeshLambertMaterial({ color: '#8b9097' });
-    const asphalt = [], kerbs = [], decks = [], rails = [], pillars = [], dashes = [];
+    const asphalt = [], kerbs = [], decks = [], rails = [], pillars = [], dashes = [], skirts = [];
 
     // A strip along samples i0..i1 between lateral offsets off0..off1 (+ = driver's right… along +n)
     const strip = (i0, i1, off0, off1, y0, y1, colours) => {
@@ -155,22 +158,42 @@ export class Scene3D {
       geo.computeVertexNormals();
       return geo;
     };
-    const stripes = k => (Math.floor(k / 2) % 2 ? [0.9, 0.12, 0.12] : [0.95, 0.95, 0.95]);
+    // Raised kerb as solid red / white blocks (each block has its own vertices, so colours don't blend)
+    const RED = [0.86, 0.1, 0.1], WHITE = [0.96, 0.96, 0.96];
+    const kerbBlocks = (i0, i1, side) => {
+      const pos = [], col = [];
+      const P = (i, off, y) => [track.cx[i] + track.nx[i] * off * side, track.ch[i] + y, track.cz[i] + track.nz[i] * off * side];
+      const quad = (a, b, c, d, colr) => { pos.push(...a, ...b, ...c, ...a, ...c, ...d); for (let k = 0; k < 6; k++) col.push(...colr); };
+      for (let i = i0; i < i1; i++) {
+        const c = Math.floor((i - i0) / 2) % 2 ? RED : WHITE;
+        const inA = P(i, hw, KERB_Y), inB = P(i + 1, hw, KERB_Y), outA = P(i, hw + KERB_W, KERB_Y), outB = P(i + 1, hw + KERB_W, KERB_Y);
+        quad(inA, inB, outB, outA, c);                                                  // top
+        quad(P(i, hw, ROAD_Y), P(i + 1, hw, ROAD_Y), inB, inA, c);                      // step up from the road
+        quad(outA, outB, P(i + 1, hw + KERB_W, -0.05), P(i, hw + KERB_W, -0.05), [0.55, 0.55, 0.58]); // outer face
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      g.computeVertexNormals();
+      return g;
+    };
 
     for (let e = 0; e < track.edgeCount.length; e++) {
       const s = track.edgeStart[e], n = track.edgeCount[e], end = s + n - 1;
       const junction = track.junction[s] === 1;
-      asphalt.push(strip(s, end, -hw, hw, 0.05, 0.05));
+      asphalt.push(strip(s, end, -hw, hw, ROAD_Y, ROAD_Y));
       if (!junction) {
-        kerbs.push(strip(s, end, hw, hw + 1.2, 0.08, 0.08, stripes));
-        kerbs.push(strip(s, end, -hw - 1.2, -hw, 0.08, 0.08, stripes));
+        kerbs.push(kerbBlocks(s, end, 1), kerbBlocks(s, end, -1));
         for (let i = s; i < end; i += 4) {
           const p = new THREE.PlaneGeometry(0.3, track.step * 1.6);
           p.rotateX(-Math.PI / 2);
           p.rotateY(-Math.atan2(track.tz[i], track.tx[i]) + Math.PI / 2);
-          p.translate(track.cx[i], track.ch[i] + 0.07, track.cz[i]);
+          p.translate(track.cx[i], track.ch[i] + ROAD_Y + 0.02, track.cz[i]);
           dashes.push(p);
         }
+      } else {
+        // junction roads have no kerbs: just the raised road's side faces
+        skirts.push(strip(s, end, hw, hw, -0.05, ROAD_Y), strip(s, end, -hw, -hw, -0.05, ROAD_Y));
       }
       // Bridges: deck underside, side walls, rails and pillars wherever the road is raised
       let raised = false;
@@ -186,7 +209,7 @@ export class Scene3D {
           if (h < 2.5) continue;
           for (const side of [-1, 1]) {
             const px = track.cx[i] + track.nx[i] * side * (hw - 1), pz = track.cz[i] + track.nz[i] * side * (hw - 1);
-            if ((track.onRoad(0, px, pz) || track.onRoad(2, px, pz)) && track.ch[i] > 3) continue; // never stand a pillar on a road underneath
+            if (track.roadBelow(px, pz, track.ch[i] - 3)) continue; // never stand a pillar on a road underneath
             const p = new THREE.BoxGeometry(1.2, h - 0.9, 1.2);
             p.translate(px, (h - 0.9) / 2, pz);
             pillars.push(p);
@@ -204,7 +227,8 @@ export class Scene3D {
       return m;
     };
     add(asphalt, asphaltMat, { receive: true });
-    add(kerbs, kerbMat);
+    add(kerbs, kerbMat, { receive: true });
+    add(skirts, new THREE.MeshLambertMaterial({ color: '#5b5f66', side: THREE.DoubleSide }));
     add(dashes, new THREE.MeshBasicMaterial({ color: '#d8d8d8' }));
     add(decks, deckMat, { cast: true });
     add(rails, railMat, { cast: true });
@@ -233,7 +257,7 @@ export class Scene3D {
     const tex = new THREE.CanvasTexture(cv); tex.magFilter = THREE.NearestFilter;
     const line = new THREE.Mesh(new THREE.PlaneGeometry(track.width, 2), new THREE.MeshBasicMaterial({ map: tex }));
     line.rotation.set(-Math.PI / 2, 0, -Math.atan2(snz, snx)); // plane's X axis across the road
-    line.position.set(track.cx[si], track.ch[si] + 0.1, track.cz[si]);
+    line.position.set(track.cx[si], track.ch[si] + ROAD_Y + 0.03, track.cz[si]);
     g.add(line);
     const postGeo = new THREE.BoxGeometry(0.6, 7, 0.6);
     const postMat = new THREE.MeshLambertMaterial({ color: '#ddd' });
@@ -437,7 +461,7 @@ export class Scene3D {
     const metal = new THREE.MeshLambertMaterial({ color: '#9ca3af' });
     for (const o of track.obstacles) {
       const g = new THREE.Group();
-      g.position.set(o.x, o.y, o.z);
+      g.position.set(o.x, o.y + ROAD_Y, o.z);
       g.rotation.y = -Math.atan2(o.nz, o.nx); // local +X = across the road, local Z = along it
       if (o.type === 'spikes') {
         const plate = new THREE.Mesh(new THREE.BoxGeometry(2 * o.b, 0.15, 2 * o.a), new THREE.MeshLambertMaterial({ color: '#4b5563' }));
@@ -502,7 +526,7 @@ export class Scene3D {
         head.position.y = -arm; head.castShadow = true; swing.add(head);
         g.add(swing);
         // hammer swings in the local X/Y plane, centred on the road
-        g.position.set(o.cx, o.y, o.cz);
+        g.position.set(o.cx, o.y + ROAD_Y, o.cz);
         this.hammers.push({ o, swing, arm });
       }
       this.trackGroup.add(g);
@@ -611,10 +635,16 @@ export class Scene3D {
       let heading = c.heading;
       if (!c.alive && c.crashed) {
         const f = (1 - Math.exp(-3 * since)) / 3;     // distance slid (decaying)
-        v.set(c.x + c.vx * f, c.roadH + Math.max(0, c.y), c.z + c.vz * f);
+        v.set(c.x + c.vx * f, c.roadH + ROAD_Y + Math.max(0, c.y), c.z + c.vz * f);
         heading += (c.slip >= 0 ? 1 : -1) * 2.2 * (1 - Math.exp(-3 * since));
-      } else v.set(c.x, c.alive ? c.roadH + c.y : c.roadH, c.z);
+      } else v.set(c.x, (c.alive ? c.roadH + c.y : c.roadH) + ROAD_Y, c.z);
       q.setFromAxisAngle(this._up, -heading);
+      this._q2 = this._q2 || new THREE.Quaternion(); this._ax = this._ax || new THREE.Vector3(0, 0, 1);
+      if (!c.airborne && this.track) {
+        // tilt with the road on slopes (tunnel ramps, bridges): nose up/down by the gradient along the heading
+        const sl = this.track.slopeAt(c.seg) * (Math.cos(heading) * this.track.tx[c.seg] + Math.sin(heading) * this.track.tz[c.seg]);
+        if (sl) { this._q2.setFromAxisAngle(this._ax, Math.atan(sl)); q.multiply(this._q2); }
+      }
       const icon = this.icons && this.icons[i];
       if (icon) {
         icon.visible = !c.alive && !gone && !c.finished;
@@ -627,7 +657,6 @@ export class Scene3D {
       this._s.setScalar(gone ? 0 : 1);
       if (c.airborne) {
         // nose follows the flight path
-        this._q2 = this._q2 || new THREE.Quaternion(); this._ax = this._ax || new THREE.Vector3(0, 0, 1);
         this._q2.setFromAxisAngle(this._ax, Math.atan2(c.vy, Math.max(1, c.speed)) * 0.8);
         q.multiply(this._q2);
       }
@@ -647,7 +676,7 @@ export class Scene3D {
       this.bodies.setColorAt(i, col);
       const base = i * per;
       if (c.alive && c.inTunnel) {
-        const cs = Math.cos(c.heading), sn = Math.sin(c.heading), y0 = c.roadH + c.y;
+        const cs = Math.cos(c.heading), sn = Math.sin(c.heading), y0 = c.roadH + c.y + ROAD_Y;
         for (let k = 0; k < per; k += 3) {
           const lx = OL[k], ly = OL[k + 1], lz = OL[k + 2];
           OP[base + k] = c.x + lx * cs - lz * sn; OP[base + k + 1] = y0 + ly; OP[base + k + 2] = c.z + lx * sn + lz * cs;
@@ -669,12 +698,12 @@ export class Scene3D {
     if (leader) {
       for (let r = 0; r < RAY_ANGLES.length; r++) {
         const a = leader.heading + RAY_ANGLES[r], d = leader.rays[r];
-        const ry = leader.roadH + leader.y + 0.8;
+        const ry = leader.roadH + leader.y + ROAD_Y + 0.8;
         pos.setXYZ(r * 2, leader.x, ry, leader.z);
         pos.setXYZ(r * 2 + 1, leader.x + Math.cos(a) * d, ry, leader.z + Math.sin(a) * d);
       }
       pos.needsUpdate = true;
-      this.marker.position.set(leader.x, leader.roadH + leader.y + 4 + Math.sin(performance.now() / 200) * 0.4, leader.z);
+      this.marker.position.set(leader.x, leader.roadH + leader.y + ROAD_Y + 4 + Math.sin(performance.now() / 200) * 0.4, leader.z);
       this.marker.visible = this.cameraMode !== 'follow';
     }
 
@@ -693,6 +722,7 @@ export class Scene3D {
       const up = leader.inTunnel ? 4 : 6;
       const tx = leader.x - Math.cos(leader.heading) * back, tz = leader.z - Math.sin(leader.heading) * back;
       this.followPos.lerp(this._v.set(tx, base + up, tz), k);
+      this.followPos.y = base + ROAD_Y + up; // follow height changes (tunnel ramps, bridges) without lag
       this.followLook.lerp(this._v.set(leader.x + Math.cos(leader.heading) * 8, base + 1, leader.z + Math.sin(leader.heading) * 8), k);
       this.camera.position.copy(this.followPos);
       this.camera.lookAt(this.followLook);

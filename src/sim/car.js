@@ -95,11 +95,11 @@ export class Car {
   sense() {
     const tr = this.track, inp = this.inputs;
     const h = this.heading;
-    const level = tr.level[this.seg];
+
     for (let r = 0; r < RAY_ANGLES.length; r++) {
       const a = h + RAY_ANGLES[r];
       const dx = Math.cos(a), dz = Math.sin(a);
-      let d = tr.raycast(this.x, this.z, dx, dz, level, RAY_LENGTH);
+      let d = tr.raycast(this.x, this.z, dx, dz, this.roadH, RAY_LENGTH);
       // hammers, spikes and crates are "seen" by the same rays
       for (const o of tr.obstacles) {
         if ((o.x - this.x) ** 2 + (o.z - this.z) ** 2 > (RAY_LENGTH + 10) ** 2 || Math.abs(o.y - this.roadH) > 2.5) continue;
