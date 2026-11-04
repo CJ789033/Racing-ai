@@ -100,6 +100,7 @@ export class DevMenu {
   }
 
   push(dir) {
+    if (this.ctx().state.driving) return; // the arrow keys are steering the player's car
     this.seq.push(dir);
     if (this.seq.length > SEQUENCE.length) this.seq.shift();
     if (this.seq.join() === SEQUENCE.join()) { this.seq = []; this.toggle(); }

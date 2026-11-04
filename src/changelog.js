@@ -121,6 +121,12 @@ export const CHANGELOG = [
   { id: 30, date: '2026-11-04', title: '✨ Update notice', items: [
     'When a new version of the game comes out while you have it open, a message offers to reload – your tracks and AI progress are kept',
   ] },
+  { id: 31, date: '2026-11-04', title: '🎮 Drive your own car', items: [
+    'Press 🎮 Drive during a race to race the AI yourself – arrow keys or WASD (Space brakes), or the buttons on screen on a phone',
+    'Your lap time and best lap show next to the AI’s best; crashing or getting busted puts you back on the road (it costs time)',
+    'The police chase you too',
+    'Tidier T junctions: no more stray kerbs or gaps in the road',
+  ] },
 ];
 
 export const LATEST_ID = CHANGELOG[CHANGELOG.length - 1].id;

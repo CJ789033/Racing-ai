@@ -704,6 +704,8 @@ export class Scene3D {
     parts.push(glass);
     for (const s of [1, -1]) { const st = new THREE.BoxGeometry(0.1, 0.4, 0.1); st.translate(-L / 2 + 0.2, 0.9, s * W * 0.4); parts.push(st); }
     const darkGeo = mergeGeometries(parts);
+    this._bodyGeo = bodyGeo; this._darkGeo = darkGeo; // (reused for the player's car)
+    if (this.playerMesh) { this.scene.remove(this.playerMesh); this.playerMesh = null; this.setPlayer(this._playerOn); }
 
     this.bodies = new THREE.InstancedMesh(bodyGeo, new THREE.MeshLambertMaterial({ color: '#ffffff' }), n);
     this.darks = new THREE.InstancedMesh(darkGeo, new THREE.MeshLambertMaterial({ color: '#16181c' }), n);
@@ -777,7 +779,35 @@ export class Scene3D {
     this.resize();
   }
 
-  updateCars(racers, leader, dt, simTime = 0, police = null) {
+  /** Show / hide the player's car (bright green with a marker above it). */
+  setPlayer(on) {
+    this._playerOn = on;
+    if (on && !this.playerMesh && this._bodyGeo) {
+      const g = new THREE.Group();
+      g.add(new THREE.Mesh(this._bodyGeo, new THREE.MeshLambertMaterial({ color: '#2fe07a' })));
+      g.add(new THREE.Mesh(this._darkGeo, new THREE.MeshLambertMaterial({ color: '#16181c' })));
+      for (const m of g.children) m.castShadow = true;
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.7, 1.4, 4), new THREE.MeshBasicMaterial({ color: '#2fe07a' }));
+      cone.rotation.x = Math.PI; cone.position.y = 3.2; g.add(cone);
+      this.playerMesh = g; this.scene.add(g);
+    }
+    if (this.playerMesh) this.playerMesh.visible = !!on;
+  }
+
+  placePlayer(c, simTime) {
+    const g = this.playerMesh; if (!g || !c) return;
+    g.position.set(c.x, c.roadH + (c.y || 0) + ROAD_Y, c.z);
+    g.quaternion.setFromAxisAngle(this._up, -c.heading);
+    let pitch = 0;
+    if (c.airborne) pitch = Math.atan2(c.vy, Math.max(1, c.speed)) * 0.8;
+    else if (this.track) pitch = Math.atan(this.track.slopeAt(c.seg) * (Math.cos(c.heading) * this.track.tx[c.seg] + Math.sin(c.heading) * this.track.tz[c.seg]));
+    if (pitch) { this._q2 = this._q2 || new THREE.Quaternion(); this._ax = this._ax || new THREE.Vector3(0, 0, 1); this._q2.setFromAxisAngle(this._ax, pitch); g.quaternion.multiply(this._q2); }
+    g.visible = c.alive || Math.floor(simTime * 8) % 2 === 0; // blinks while waiting to be put back on the road
+    g.children[2].position.y = 3.2 + Math.sin(simTime * 4) * 0.25;
+  }
+
+  updateCars(racers, leader, dt, simTime = 0, police = null, player = null) {
+    if (player) this.placePlayer(player, simTime);
     const cars = police && police.length && this.nPolice === police.length ? racers.concat(police) : racers;
     const nR = racers.length;
     for (const h of this.hammers || []) {
@@ -896,7 +926,7 @@ export class Scene3D {
       this.marker.visible = this.cameraMode !== 'follow';
     }
 
-    this.updateCamera(leader, dt);
+    this.updateCamera(player || leader, dt);
     this.controls.enabled = this.cameraMode === 'orbit';
     if (this.cameraMode === 'orbit') this.controls.update();
     this.renderer.render(this.scene, this.camera);

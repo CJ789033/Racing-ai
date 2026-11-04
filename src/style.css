@@ -197,3 +197,17 @@ input[type=range] { width: 130px; accent-color: #ff8a1f; }
   width: max-content; max-width: calc(100vw - 32px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 12px;
   background: #17324d; border: 1px solid #3fa7ff; border-radius: 10px; color: #fff; font-size: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.45); }
 .updateBanner button { flex-direction: row; font-size: 13px; padding: 7px 11px; }
+/* driving your own car */
+.driveHud { position: absolute; z-index: 5; left: 50%; transform: translateX(-50%); top: calc(10px + env(safe-area-inset-top, 0px));
+  display: flex; flex-direction: column; gap: 3px; padding: 8px 14px; min-width: min(340px, calc(100vw - 32px)); max-width: calc(100vw - 32px);
+  border: 1px solid #2fe07a; font-variant-numeric: tabular-nums; }
+.driveHud .dRow { display: flex; gap: 14px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+.driveHud .dBig { font-size: 20px; font-weight: 800; }
+.drivePad { position: absolute; z-index: 6; left: 0; right: 0; bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  display: flex; justify-content: space-between; padding: 0 max(14px, env(safe-area-inset-right, 0px)) 0 max(14px, env(safe-area-inset-left, 0px)); pointer-events: none; }
+.drivePad .padSide { display: flex; gap: 12px; pointer-events: auto; }
+.drivePad button { width: 74px; height: 74px; border-radius: 18px; font-size: 26px; background: rgba(20, 23, 28, 0.72); border: 2px solid rgba(255,255,255,0.35);
+  touch-action: none; user-select: none; -webkit-user-select: none; }
+.drivePad button.down { background: rgba(47, 224, 122, 0.55); border-color: #2fe07a; }
+.drivePad .padGas { width: 84px; }
+@media (max-width: 640px) { .driveHud { top: auto; bottom: calc(100px + env(safe-area-inset-bottom, 0px)); } }

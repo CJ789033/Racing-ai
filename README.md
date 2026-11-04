@@ -32,6 +32,9 @@ Turn on police in **AI** settings. Police never park (once moving they keep at l
 ### 🎓 Tutorial
 New players get a guided tour (`src/ui/tutorial.js`, steps in `src/main.js`): each step spot-lights one part of the screen – parts, grid, tools, presets, Start evolution, then the race stats, speed, brain, AI settings and the Track button – with Back / Next / Skip (keyboard: ← → Enter Esc). Phones get touch wording. Replay it from **⚙️ AI settings → 🎓 Replay tutorial**.
 
+### 🎮 Drive your own car
+**🎮 Drive** in the race toolbar adds a bright-green player car (`src/sim/player.js`, same physics as the AI) starting just behind the line. Arrow keys / WASD (Space brakes), or on-screen buttons on touch screens; the camera follows you and driving always runs at 1×. A panel shows your lap, lap / race time, best lap and the AI's best. Crashes, going off the road and busts put you back on the road after a second (the clock keeps running); after the finish a new race starts by itself. The police hunt you as well. The player isn't part of the evolution, though while you drive the police chase you, so a repeatable run won't replay exactly.
+
 ### 🔗 Track codes
 **🔗 Code** in the track builder turns the current track into one line of text (`RAI1.` = compressed, `RAI0.` = plain) and loads a pasted one. The developer menu report includes the code too, so a bug report carries the exact layout. Code: `src/ui/trackCode.js`.
 

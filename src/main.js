@@ -9,6 +9,7 @@ import { encodeTrack, decodeTrack } from './ui/trackCode.js';
 import { DevMenu } from './ui/devMenu.js';
 import { DebugViz } from './render/debugViz.js';
 import { startUpdateCheck } from './ui/updateCheck.js';
+import { PlayerCar } from './sim/player.js';
 import { Scene3D } from './render/scene3d.js';
 import { TrackEditor } from './ui/editor.js';
 import { TileEditor } from './ui/tileEditor.js';
@@ -182,6 +183,7 @@ function load() {
 
 // ---------------------------------------------------------------- modes
 function enterEditor() {
+  if (state.driving) setDriving(false);
   state.mode = 'editor';
   $('raceHud').classList.add('hidden');
   $('editor').classList.remove('hidden');
@@ -225,6 +227,7 @@ function startRace({ fromSave = null, reset = false } = {}) {
 
   scene.setTrack(state.track);
   scene.setPopulation(state.evo.cars.length, state.evo.police.cars.length);
+  attachPlayer();
   scene.renderer.shadowMap.enabled = state.shadows;
   state.mode = 'race';
   $('editor').classList.add('hidden');
@@ -486,6 +489,7 @@ $('sClose').onclick = async () => {
     const seed = keepBrain ? evo.bestGenome : null;
     state.evo = new Evolution(state.track, state.settings, seed, evo.police.cars.length ? evo.police.genomes : null);
     scene.setPopulation(state.evo.cars.length, state.evo.police.cars.length);
+    attachPlayer();
   }
   save();
 };
@@ -543,7 +547,9 @@ function frame(now) {
   if (!state.paused) {
     const tSim = performance.now();
     // F9 slow motion (developer tools) runs at a quarter of the chosen speed
-    const speed = devMenu.slowmo && SPEEDS[state.speedIdx] !== 'MAX' ? SPEEDS[state.speedIdx] * 0.25 : SPEEDS[state.speedIdx];
+    // F9 slow motion (developer tools) runs at a quarter of the chosen speed; driving yourself is always 1×
+    const base = state.driving ? 1 : SPEEDS[state.speedIdx];
+    const speed = devMenu.slowmo && base !== 'MAX' ? base * 0.25 : base;
     const prevGen = evo.generation, prevBest = evo.bestLap;
     if (speed === 'MAX') {
       const t0 = performance.now();
@@ -568,7 +574,7 @@ function frame(now) {
   // F8 (developer tools) can follow any car instead of the leader
   const leader = devMenu.focusCar(evo) || evo.leader();
   if (devMenu.unlocked) debugViz.update(evo, evo.time, leader);
-  scene.updateCars(evo.cars, leader, dt, evo.time, evo.police.cars);
+  scene.updateCars(evo.cars, leader, dt, evo.time, evo.police.cars, state.driving ? state.player : null);
 
   hudTimer -= dt;
   if (hudTimer <= 0) {
@@ -582,6 +588,7 @@ function frame(now) {
     const laps = state.track.laps;
     $('sBestLbl').textContent = laps > 1 ? `Best (${laps} laps)` : 'Best lap';
     $('sLap').textContent = leader ? `${Math.min(laps, leader.lap + (leader.finished ? 0 : 1))} / ${laps}${leader.finished ? ' 🏁' : ''}` : '–';
+    if (state.driving) updateDriveHud();
     const pc = evo.police.cars.length;
     $('rowPolice').classList.toggle('hidden', !pc); $('legPolice').classList.toggle('hidden', !pc);
     if (pc) {
@@ -647,6 +654,65 @@ $('eNews').onclick = openNews;
 $('newsClose').onclick = () => { $('news').classList.add('hidden'); markNewsSeen(); };
 $('news').onclick = e => { if (e.target === $('news')) $('newsClose').onclick(); };
 
+// ---------------------------------------------------------------- your own car (🎮 Drive)
+const DRIVE_KEYS = { ArrowUp: 'gas', KeyW: 'gas', ArrowDown: 'brake', KeyS: 'brake', Space: 'brake', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right' };
+function attachPlayer() {
+  if (!state.driving || !state.evo) return;
+  if (!state.player || state.player.track !== state.track) { state.player = new PlayerCar(state.track); state.player.restart(); }
+  state.evo.setPlayer(state.player);
+}
+function setDriving(on) {
+  state.driving = on;
+  $('bDrive').classList.toggle('active', on);
+  $('driveHud').classList.toggle('hidden', !on);
+  $('drivePad').classList.toggle('hidden', !on || !matchMedia('(pointer: coarse)').matches);
+  if (on) {
+    attachPlayer();
+    state.camBeforeDrive = scene.cameraMode;
+    if (scene.cameraMode === 'orbit') { scene.cycleCamera(); } // → follow
+    $('camLbl').textContent = scene.cameraMode[0].toUpperCase() + scene.cameraMode.slice(1);
+    if (state.paused) $('bPause').click();
+    toast('🎮 You’re in! Arrows / WASD to drive' + (matchMedia('(pointer: coarse)').matches ? ' – or the buttons on screen' : ''));
+  } else {
+    if (state.evo) state.evo.setPlayer(null);
+    state.player = null;
+    while (state.camBeforeDrive && scene.cameraMode !== state.camBeforeDrive) scene.cycleCamera();
+    $('camLbl').textContent = scene.cameraMode[0].toUpperCase() + scene.cameraMode.slice(1);
+  }
+  scene.setPlayer(on);
+}
+$('bDrive').onclick = () => setDriving(!state.driving);
+window.addEventListener('keydown', e => {
+  if (!state.driving || state.mode !== 'race' || !state.player) return;
+  const k = DRIVE_KEYS[e.code]; if (!k) return;
+  e.preventDefault(); state.player.input[k] = true;
+});
+window.addEventListener('keyup', e => {
+  if (!state.player) return;
+  const k = DRIVE_KEYS[e.code]; if (k) state.player.input[k] = false;
+});
+window.addEventListener('blur', () => { if (state.player) for (const k in state.player.input) state.player.input[k] = false; });
+for (const b of document.querySelectorAll('#drivePad button')) {
+  const k = b.dataset.k;
+  const set = v => e => { e.preventDefault(); if (state.player) state.player.input[k] = v; b.classList.toggle('down', v); };
+  b.addEventListener('pointerdown', e => { set(true)(e); try { b.setPointerCapture(e.pointerId); } catch { /* not every browser allows it */ } });
+  b.addEventListener('pointerup', set(false)); b.addEventListener('pointercancel', set(false)); b.addEventListener('lostpointercapture', set(false));
+}
+const fmtTime = t => (t == null ? '–' : t >= 60 ? `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}` : `${t.toFixed(1)} s`);
+function updateDriveHud() {
+  const p = state.player; if (!p) return;
+  const laps = state.track.laps;
+  $('dLap').textContent = p.finished ? '🏁 Finished!' : `Lap ${Math.min(laps, p.lap + 1)}/${laps}`;
+  $('dTime').textContent = fmtTime(p.finished && p.lastResult ? p.lastResult.time : laps > 1 ? p.lapClock : p.raceClock);
+  $('dBest').textContent = `Best lap ${p.bestLap ? p.bestLap.toFixed(2) + ' s' : '–'}`;
+  const ai = state.evo && state.evo.bestLap;
+  $('dAi').textContent = `AI best ${ai ? (laps > 1 ? fmtTime(ai) + ' total' : ai.toFixed(2) + ' s') : '–'}`;
+  $('dSpeed').textContent = `${Math.round(p.speed * 3.6)} km/h`;
+  $('dMsg').textContent = !p.alive ? (p.busted ? '🚨 Busted! Back on the road in a moment…' : '💥 Crashed! Back on the road in a moment…')
+    : p.finished && p.lastResult ? `Race time ${fmtTime(p.lastResult.time)}${p.lastResult.respawns ? ` (${p.lastResult.respawns} reset${p.lastResult.respawns > 1 ? 's' : ''})` : ''}${p.bestRace ? ` · your best clean race ${fmtTime(p.bestRace)}` : ''}`
+    : matchMedia('(pointer: coarse)').matches ? 'Use the buttons to drive' : 'Arrows / WASD to drive · Space to brake';
+}
+
 // ---------------------------------------------------------------- track codes
 $('eCode').onclick = async () => {
   $('codeMsg').textContent = ''; $('codeIn').value = ''; $('codeOut').value = 'Making the code…';
@@ -689,6 +755,9 @@ const tutorial = new Tutorial([
     text: '<b>Gen</b> is the generation. At first the cars are clueless and crash quickly – every generation the best are kept and tweaked, so they get further and faster.<br><b>Best lap</b> is the record so far. Cars that are out show 💥 (crashed) or 💤 (stopped).' },
   { mode: 'race', target: '#bSpeed', title: '⏩ Speed it up',
     text: 'Learning takes a while at normal speed. Tap this to run faster – <b>MAX</b> trains as fast as your device can.' },
+  { mode: 'race', target: '#bDrive', title: '🎮 Race them yourself',
+    text: 'Press <b>Drive</b> to put your own car on the track and race the AI – <b>arrow keys or WASD</b> to drive, Space to brake. Can you beat their best lap?',
+    phoneText: 'Press <b>Drive</b> to put your own car on the track and race the AI with the <b>buttons on screen</b>. Can you beat their best lap?' },
   { mode: 'race', target: '#bPanels', title: '🧠 Inside the brain',
     text: 'Shows the leading car’s neural network live – its sensors on the left, steering and gas on the right – plus a chart of progress over the generations.' },
   { mode: 'race', target: '#bSettings', title: '⚙️ AI settings',

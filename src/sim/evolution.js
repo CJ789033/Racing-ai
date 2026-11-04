@@ -104,7 +104,14 @@ export class Evolution {
   linkPolice() {
     const list = this.police.cars.length ? this.police.cars : null;
     for (const c of this.cars) c.police = list;
-    this.police.setRacers(this.cars);
+    this.police.setRacers(this.player ? [...this.cars, this.player] : this.cars);
+  }
+
+  /** The player's own car (or null): driven alongside the AI, and hunted by the police too. */
+  setPlayer(p) {
+    this.player = p;
+    if (p) p.police = this.police.cars.length ? this.police.cars : null;
+    this.linkPolice();
   }
 
   /** Change how many police cars there are (keeps their brains). */
@@ -140,7 +147,8 @@ export class Evolution {
     this.time += DT;
     let alive = 0;
     for (const c of this.cars) c.step(DT);
-    if (this.police.cars.length && this.policeActive) this.police.step(DT, this.cars);
+    if (this.player) this.player.step(DT);
+    if (this.police.cars.length && this.policeActive) this.police.step(DT, this.player ? this.police.racers : this.cars);
     for (const c of this.cars) if (c.racing) alive++;
     if (alive === 0 || this.time >= this.timeLimit) { this.nextGeneration(); return true; }
     return false;
