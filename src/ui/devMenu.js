@@ -44,15 +44,7 @@ export class DevMenu {
     this.simRate = 0;
     const root = this.root = document.createElement('div');
     root.className = 'devMenu hidden';
-    root.innerHTML = `
-      <div class="devHead">
-        <b>🛠️ Developer menu</b>
-        <span class="devGap"></span>
-        <button class="devCopy">Copy debug report</button>
-        <button class="devClose" title="Close (Esc)">✕</button>
-      </div>
-      <div class="devBody"></div>
-      <div class="devFoot muted small">Open / close: ↑ ↑ ↓ ← → (or swipe up, up, down, left, right). The report is copied as text – paste it into a message.</div>`;
+    root.innerHTML = `<div class="devHead">DEV  <button class="devCopy">[copy]</button> <button class="devClose">[close]</button></div><pre class="devBody"></pre>`;
     document.body.appendChild(root);
     this.body = root.querySelector('.devBody');
     root.querySelector('.devClose').onclick = () => this.toggle(false);
@@ -190,50 +182,43 @@ export class DevMenu {
   }
 
   render() {
-    let data;
-    try { data = this.collect(); } catch (e) { data = { error: 'developer menu failed: ' + (e.stack || e.message) }; }
-    this.last = data;
-    const b = this.body;
-    const keepScroll = b.scrollTop;
-    b.innerHTML = '';
-    for (const [section, val] of Object.entries(data)) {
-      const sec = document.createElement('section');
-      const h = document.createElement('div'); h.className = 'devSec'; h.textContent = section; sec.appendChild(h);
-      if (val && typeof val === 'object' && !Array.isArray(val)) {
-        const dl = document.createElement('dl');
-        for (const [k, v] of Object.entries(val)) {
-          if (v === undefined) continue;
-          const dt = document.createElement('dt'); dt.textContent = k;
-          const dd = document.createElement('dd'); dd.textContent = fmt(v);
-          dl.append(dt, dd);
-        }
-        sec.appendChild(dl);
-      } else {
-        const pre = document.createElement('pre'); pre.textContent = fmt(val); sec.appendChild(pre);
+    let text;
+    try { this.last = this.collect(); text = this.report(this.last); } catch (e) { text = 'developer menu failed: ' + (e.stack || e.message); }
+    const b = this.body, keep = b.scrollTop;
+    b.textContent = text;
+    b.scrollTop = keep;
+  }
+
+  /** The whole report as plain text, one "key: value" per line. */
+  report(data = this.collect()) {
+    const lines = ['racing-ai debug report  ' + new Date().toISOString()];
+    const walk = (v, pad) => {
+      for (const [k, x] of Object.entries(v)) {
+        if (x === undefined) continue;
+        if (x && typeof x === 'object' && !Array.isArray(x)) { lines.push(pad + k + ':'); walk(x, pad + '  '); }
+        else if (Array.isArray(x)) { lines.push(pad + k + ':'); for (const y of x) lines.push(pad + '  ' + (typeof y === 'object' ? JSON.stringify(y) : y)); }
+        else lines.push(pad + k + ': ' + x);
       }
-      b.appendChild(sec);
+    };
+    for (const [sec, v] of Object.entries(data)) {
+      lines.push('', '== ' + sec);
+      if (v && typeof v === 'object') walk(v, '  '); else lines.push('  ' + v);
     }
-    b.scrollTop = keepScroll;
+    return lines.join('\n');
   }
 
   async copy() {
-    const text = 'Racing AI debug report\n' + JSON.stringify(this.collect(), null, 2);
+    const text = this.report();
     const btn = this.root.querySelector('.devCopy');
-    try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied ✓'; }
+    try { await navigator.clipboard.writeText(text); btn.textContent = '[copied]'; }
     catch {
       // clipboard blocked: show the text selected so it can be copied by hand
       const ta = document.createElement('textarea'); ta.value = text; ta.className = 'devText';
-      this.body.prepend(ta); ta.focus(); ta.select();
-      btn.textContent = 'Select all & copy below';
+      this.root.insertBefore(ta, this.body); ta.focus(); ta.select();
+      btn.textContent = '[select & copy]';
     }
-    setTimeout(() => { btn.textContent = 'Copy debug report'; }, 2500);
+    setTimeout(() => { btn.textContent = '[copy]'; }, 2500);
   }
 }
 
 function stripTile(t) { const o = { ...t }; delete o._painted; return o; }
-function fmt(v) {
-  if (v == null) return String(v);
-  if (Array.isArray(v)) return v.map(x => (typeof x === 'object' ? JSON.stringify(x) : String(x))).join('\n');
-  if (typeof v === 'object') return Object.entries(v).map(([k, x]) => `${k}: ${typeof x === 'object' ? JSON.stringify(x) : x}`).join('\n');
-  return String(v);
-}

@@ -55,7 +55,7 @@ export class Evolution {
 
   /**
    * Police join once the racers can finish reliably (a generation where at least
-   * 20 % of the cars finished) – first the racers learn the track, then the chase begins.
+   * 10 % of the cars, and at least 5, finished) – first the racers learn the track, then the chase begins.
    */
   get policeActive() { return !!this.policeOn; }
   parkPoliceIfWaiting() { if (!this.policeActive) this.police.park(); }
@@ -175,7 +175,7 @@ export class Evolution {
     });
     this.generation++;
     this.time = 0;
-    if (!this.policeOn && finishers.length >= Math.max(5, 0.2 * this.cars.length)) this.policeOn = true;
+    if (!this.policeOn && finishers.length >= Math.max(5, 0.1 * this.cars.length)) this.policeOn = true;
     this.policeWasActive = this.policeActive;
     this.parkPoliceIfWaiting();
   }
