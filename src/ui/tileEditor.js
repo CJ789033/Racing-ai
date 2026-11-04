@@ -90,8 +90,9 @@ export class TileEditor {
         e.preventDefault();
         this.paletteSel = { kind, key, ...start };
         this.syncPalette();
-        if (kind === 'piece') this.startDrag({ kind, tile: { ...start.tile, rot: 0, c: 0, r: 0 }, grab: { dc: 0, dr: 0 } }, e);
-        else this.startDrag({ kind, type: start.type }, e);
+        const from = { palette: true, x0: e.clientX, y0: e.clientY };
+        if (kind === 'piece') this.startDrag({ kind, tile: { ...start.tile, rot: 0, c: 0, r: 0 }, grab: { dc: 0, dr: 0 }, ...from }, e);
+        else this.startDrag({ kind, type: start.type, ...from }, e);
       });
       item.dataset.key = key;
       grid.appendChild(item);
@@ -439,6 +440,14 @@ export class TileEditor {
     if (!this.drag) return;
     const d = this.drag;
     this.drag = null;
+    if (d.palette) {
+      // a tap on the palette only selects the piece; it's placed only when dragged off the palette
+      // onto the grid (the palette can sit on top of part of the grid, especially on phones)
+      const moved = Math.hypot(e.clientX - d.x0, e.clientY - d.y0) > DRAG_THRESHOLD;
+      const pr = this.palette.getBoundingClientRect();
+      const overPalette = e.clientX >= pr.left && e.clientX <= pr.right && e.clientY >= pr.top && e.clientY <= pr.bottom;
+      if (!moved || overPalette) { this.draw(); return; }
+    }
     const cell = this.cellAt(e.clientX, e.clientY);
     if (d.kind === 'obstacle') {
       const list = cell ? this.tilesAt(cell.c, cell.r) : [];
