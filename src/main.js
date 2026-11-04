@@ -402,6 +402,9 @@ function syncSettingsUI() {
   }
   $('iShadows').checked = state.shadows;
   $('iSeeThrough').checked = state.seeThrough;
+  const nHidden = Object.keys(hiddenHints()).length;
+  $('iShowHints').disabled = !nHidden;
+  $('iHintsInfo').textContent = nHidden ? `${nHidden} hint${nHidden > 1 ? 's' : ''} hidden` : 'No hints hidden';
 }
 $('bSettings').onclick = () => { syncSettingsUI(); $('settings').classList.remove('hidden'); };
 $('iPop').oninput = e => { state.settings.populationSize = Number(e.target.value); syncSettingsUI(); };
@@ -421,6 +424,11 @@ $('iShadows').onchange = e => {
   scene.renderer.shadowMap.enabled = state.shadows;
   scene.scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });
   save();
+};
+$('iShowHints').onclick = () => {
+  try { localStorage.removeItem(HINTS_KEY); } catch { /* storage blocked */ }
+  syncSettingsUI();
+  toast('Hints will show again');
 };
 $('iSeeThrough').onchange = e => {
   state.seeThrough = e.target.checked;

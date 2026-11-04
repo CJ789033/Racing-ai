@@ -136,3 +136,6 @@ input[type=range] { width: 130px; accent-color: #ff8a1f; }
   .panels .card { width: calc(50vw - 14px); }
   .toolbar { max-width: 50vw; }
 }
+.hintsRow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hintsRow button { flex-direction: row; font-size: 14px; padding: 8px 12px; }
+.hintsRow button:disabled { opacity: 0.45; }
