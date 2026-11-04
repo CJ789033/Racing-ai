@@ -272,6 +272,13 @@ export class TileEditor {
     if (this.pointers.size === 2) {
       // second finger: pinch to zoom / two-finger pan; cancel whatever the first finger started
       this.press = null; this.drag = null; this.box = null; this.rotDrag = null; this.emptyPress = null; this.panDrag = null;
+      this.pendingDelete = null;
+      if (this.paint) {
+        // the first finger had started painting – that was the start of a pinch, so undo the stroke
+        this.tiles = this.paint.before; this.paint = null;
+        if (this.selected && !this.tiles.includes(this.selected)) this.select(null);
+        this.changed();
+      }
       const [a, b] = [...this.pointers.values()];
       this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
       this.draw();
@@ -295,7 +302,8 @@ export class TileEditor {
     if (!cell) { this.emptyPress = { x: e.clientX, y: e.clientY, cell: null }; return; } // tap = deselect, drag = pan
     const t = this.tileAt(cell.c, cell.r);
     if (this.mode === 'delete') {
-      if (t) { this.remove(t); this.changed(); }
+      // delete on release, so a pinch (second finger) can still cancel it
+      if (t) this.pendingDelete = { tile: t, x: e.clientX, y: e.clientY };
       else this.emptyPress = { x: e.clientX, y: e.clientY, cell: null, noop: true };
       return;
     }
@@ -309,7 +317,7 @@ export class TileEditor {
     }
     if (t) { this.press = { tile: t, x: e.clientX, y: e.clientY, cell }; return; }
     // empty grass: a tap places the selected piece (or closes the panel), a drag moves the view
-    this.emptyPress = { x: e.clientX, y: e.clientY, cell };
+    this.emptyPress = { x: e.clientX, y: e.clientY, cell, touch: e.pointerType === 'touch' || e.pointerType === 'pen' };
   }
 
   /** What a plain tap on empty grass does. */
@@ -317,6 +325,13 @@ export class TileEditor {
     if (p.noop) return;
     if (!p.cell || this.selected) { this.select(null); return; }
     if (this.paletteSel.kind === 'piece') {
+      if (p.touch) {
+        // touch screens: double-tap to place, so zooming / panning never drops pieces by accident
+        const now = performance.now(), last = this.lastTap;
+        this.lastTap = { c: p.cell.c, r: p.cell.r, t: now };
+        if (!last || now - last.t > 450 || last.c !== p.cell.c || last.r !== p.cell.r) { this.onMessage('Double-tap to place the piece here'); return; }
+        this.lastTap = null;
+      }
       const tile = this.clampToGrid({ ...(this.paletteSel.tile || { type: this.paletteSel.type }), rot: 0, c: p.cell.c, r: p.cell.r });
       this.place(tile);
     } else this.onMessage('Drag obstacles onto a track piece');
@@ -334,6 +349,7 @@ export class TileEditor {
       this.pinch = { d, mx, my };
       return;
     }
+    if (this.pendingDelete && Math.hypot(e.clientX - this.pendingDelete.x, e.clientY - this.pendingDelete.y) > DRAG_THRESHOLD) this.pendingDelete = null;
     if (this.emptyPress && !this.panDrag && Math.hypot(e.clientX - this.emptyPress.x, e.clientY - this.emptyPress.y) > DRAG_THRESHOLD) {
       this.panDrag = { x: this.emptyPress.x, y: this.emptyPress.y };
       this.emptyPress = null;
@@ -386,6 +402,7 @@ export class TileEditor {
     this.pointers.delete(e.pointerId);
     if (this.pinch) { if (this.pointers.size === 0) this.pinch = null; return; } // ignore the rest of a pinch
     if (this.panDrag) { this.panDrag = null; return; }
+    if (this.pendingDelete) { const t = this.pendingDelete.tile; this.pendingDelete = null; if (this.tiles.includes(t)) { this.remove(t); this.changed(); } return; }
     if (this.paint) { this.paint = null; for (const t of this.tiles) delete t._painted; this.changed(); return; }
     if (this.emptyPress) { const p = this.emptyPress; this.emptyPress = null; this.emptyTap(p); return; }
     if (this.rotDrag) { this.rotDrag = null; this.draw(); return; }
@@ -516,7 +533,7 @@ export class TileEditor {
     if (this.paletteSel.kind !== 'piece') { this.onMessage('Pick a road piece to paint with'); return; }
     const base = this.paletteSel.tile || { type: this.paletteSel.type };
     const road = base.type === 'straight' || base.type === 'corner';
-    this.paint = { base, road, cells: [cell], dirs: [null], stamped: new Set() };
+    this.paint = { base, road, cells: [cell], dirs: [null], stamped: new Set(), before: this.tiles.slice() };
     if (road) {
       // starting right next to the open end of a road? line the first piece up with it
       for (const t of this.tiles) for (const pt of pieceGeometry(t).ports) {
