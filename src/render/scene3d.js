@@ -332,7 +332,7 @@ export class Scene3D {
     const profile = [[W, 0], [W, WALL]];
     for (let k = 1; k < 14; k++) { const a = Math.PI * k / 14; profile.push([W * Math.cos(a), WALL + ARCH * Math.sin(a)]); }
     profile.push([-W, WALL], [-W, 0]);
-    const tubes = [], walls = [], lights = [], portals = [], mounds = [];
+    const tubes = [], walls = [], lights = [], portals = [], mounds = [], caps = [];
     // a hill tunnel's grassy mound: a wide, low hump over the tube
     const M = W + 6, MH = WALL + ARCH + 2.4;
     const moundProfile = [];
@@ -368,6 +368,19 @@ export class Scene3D {
       g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
       return g;
     };
+    // concrete coping along the top of the cutting walls, hiding the edge of the hole in the grass
+    const cap = (i0, i1, side) => {
+      const n = i1 - i0 + 1, pos = new Float32Array(n * 6), idx = [];
+      for (let k = 0; k < n; k++) {
+        const i = i0 + k, x = track.cx[i], z = track.cz[i];
+        pos.set([x + track.nx[i] * (W - 0.15) * side, 0.06, z + track.nz[i] * (W - 0.15) * side,
+                 x + track.nx[i] * (W + 0.75) * side, 0.06, z + track.nz[i] * (W + 0.75) * side], k * 6);
+        if (k < n - 1) { const a = k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+      return g;
+    };
     const portal = i => {
       const shape = new THREE.Shape();
       if (track.hill[i]) {
@@ -375,7 +388,7 @@ export class Scene3D {
         moundProfile.forEach(([o, y], k) => (k ? shape.lineTo(o * 0.97, y * 0.97) : shape.moveTo(o * 0.97, 0)));
         shape.closePath();
       } else {
-        const top = -track.ch[i] + 0.4; // up to just above the ground
+        const top = -track.ch[i] - 0.03; // flush with the ground (the sides beyond the cutting stay hidden under the grass)
         shape.moveTo(-W - 2.5, 0); shape.lineTo(W + 2.5, 0); shape.lineTo(W + 2.5, top); shape.lineTo(-W - 2.5, top); shape.closePath();
       }
       const hole = new THREE.Path();
@@ -398,7 +411,8 @@ export class Scene3D {
         const cov = covered(k);
         let j = k;
         while (j < end && covered(j + 1) === cov) j++;
-        const a = Math.max(s0, k - 1), b = Math.min(end, j + 1); // overlap a sample so pieces meet
+        // overlap a sample so pieces meet – but never poke the tube out past a portal
+        const a = cov && k > s0 ? k : Math.max(s0, k - 1), b = cov && j < end ? j : Math.min(end, j + 1);
         if (cov) {
           tubes.push(sweep(a, b));
           for (let i = k; i <= j; i += 5) {
@@ -413,6 +427,7 @@ export class Scene3D {
           if (j < end || openBeyond(end)) portals.push(portal(j));
         } else {
           walls.push(wall(a, b, W), wall(a, b, -W));
+          caps.push(cap(a, b, 1), cap(a, b, -1));
         }
         k = j + 1;
       }
@@ -424,6 +439,7 @@ export class Scene3D {
     const mound = add(mounds, this.moundMat);
     if (mound) mound.receiveShadow = true;
     add(walls, new THREE.MeshLambertMaterial({ color: '#78716c', side: THREE.DoubleSide }));
+    add(caps, new THREE.MeshLambertMaterial({ color: '#a8a29e', side: THREE.DoubleSide }));
     add(portals, new THREE.MeshLambertMaterial({ color: '#b8b2aa' }));
     add(lights, new THREE.MeshBasicMaterial({ color: '#fff3c4' }));
     this.applyTunnelLook();
@@ -487,6 +503,8 @@ export class Scene3D {
       }
     }
     const tex = new THREE.CanvasTexture(cv);
+    // crisp edges: no blurry, half-transparent fringe of grass around the openings
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false;
     const patch = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
       new THREE.MeshLambertMaterial({ color: '#6fb24a', alphaMap: tex, transparent: true, alphaTest: 0.02, side: THREE.DoubleSide }));
     patch.rotation.x = -Math.PI / 2;
