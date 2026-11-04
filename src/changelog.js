@@ -103,6 +103,10 @@ export const CHANGELOG = [
     'T junctions and crossroads have smooth turning lanes instead of a sharp 90° kink',
     'Police chase map: wider road and 3 laps, so there’s time for a proper chase',
   ] },
+  { id: 27, date: '2026-11-04', title: '📡 Police radar', items: [
+    'Racers now sense police all the way around them – front, sides and behind – and how fast the nearest one is closing in, so they can learn to dodge police coming from behind',
+    'Brains you already trained keep driving the same; they learn to use the radar from here',
+  ] },
 ];
 
 export const LATEST_ID = CHANGELOG[CHANGELOG.length - 1].id;

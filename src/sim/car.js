@@ -23,10 +23,13 @@ export const RAY_LENGTH = 70;
 // Distances (m) to the look-ahead points on the road (along the shortest route)
 export const LOOKAHEAD = [10, 25, 45, 70];
 // Inputs: rays + speed + lateral offset + look-ahead directions + speed level + sideways slide
-// + nearest police car (direction, closeness)
-export const INPUT_SIZE = RAY_ANGLES.length + 2 + LOOKAHEAD.length + 2 + 2;
-export const OLD_INPUT_SIZE = INPUT_SIZE - 2; // brains saved before police existed
-const POLICE_SEE = 60;     // metres – how far racers notice police cars
+// + police radar (how close the nearest police car is in each of 6 zones around
+// the car, and how fast the nearest one is closing in)
+export const BASE_INPUT_SIZE = RAY_ANGLES.length + 2 + LOOKAHEAD.length + 2;
+export const RADAR_ZONES = 6;           // 60° each: front, front-right, back-right, behind, back-left, front-left
+export const INPUT_SIZE = BASE_INPUT_SIZE + RADAR_ZONES + 1;
+export const OLD_INPUT_SIZES = [BASE_INPUT_SIZE, BASE_INPUT_SIZE + 2]; // brains saved before police / before the radar
+const POLICE_SEE = 70;     // metres – how far racers notice police cars
 const POLICE_R = 1.6;      // police cars look like a circle this big to the distance sensors
 export const OUTPUT_SIZE = 2; // steer, throttle/brake
 
@@ -137,15 +140,22 @@ export class Car {
     }
     inp[k++] = this.speedLevel / 4;
     inp[k++] = clamp(this.slip / 10, -1, 1);
-    // nearest police car: which way, and how close
-    let pd = POLICE_SEE * POLICE_SEE, pa = 0, seen = false;
+    // police radar: for each zone around the car, how close the nearest police car there is
+    // (0 = none within range, 1 = right next to us), plus how fast the nearest one closes in
+    const radar = this.radar || (this.radar = new Float32Array(RADAR_ZONES));
+    radar.fill(0);
+    let nd = POLICE_SEE, closing = 0;
     if (this.police) for (const p of this.police) {
       if (!p.alive || Math.abs(p.roadH - this.roadH) > 3) continue;
-      const d2 = (p.x - this.x) ** 2 + (p.z - this.z) ** 2;
-      if (d2 < pd) { pd = d2; pa = Math.atan2(p.z - this.z, p.x - this.x); seen = true; }
+      const dx = p.x - this.x, dz = p.z - this.z, d = Math.hypot(dx, dz);
+      if (d >= POLICE_SEE) continue;
+      const rel = angleDiff(Math.atan2(dz, dx), h);               // 0 = dead ahead, + = to the right
+      const zone = ((Math.round(rel / (Math.PI / 3)) % RADAR_ZONES) + RADAR_ZONES) % RADAR_ZONES;
+      radar[zone] = Math.max(radar[zone], 1 - d / POLICE_SEE);
+      if (d < nd) { nd = d; closing = -((p.vx - this.vx) * dx + (p.vz - this.vz) * dz) / (d || 1); }
     }
-    inp[k++] = seen ? angleDiff(pa, h) / Math.PI : 0;
-    inp[k++] = seen ? 1 - Math.sqrt(pd) / POLICE_SEE : 0;
+    for (let z = 0; z < RADAR_ZONES; z++) inp[k++] = radar[z];
+    inp[k++] = clamp(closing / 30, -1, 1);
     return inp;
   }
 

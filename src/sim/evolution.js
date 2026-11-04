@@ -1,7 +1,7 @@
 // Genetic algorithm that evolves a population of neural-net drivers.
 
 import { NeuralNet, gaussian } from './nn.js';
-import { Car, INPUT_SIZE, OLD_INPUT_SIZE, OUTPUT_SIZE } from './car.js';
+import { Car, INPUT_SIZE, BASE_INPUT_SIZE, OLD_INPUT_SIZES, OUTPUT_SIZE } from './car.js';
 import { PoliceForce } from './police.js';
 import { resetObstacles } from './obstacles.js';
 
@@ -202,18 +202,22 @@ export class Evolution {
   }
 }
 
-/** Brains saved before the police inputs existed get those inputs added with zero weight (same driving). */
+/**
+ * Brains saved with fewer inputs (before police, or before the police radar) keep their
+ * driving inputs; the police inputs start with zero weight (same driving without police).
+ */
 export function upgradeGenome(g, layers) {
   if (!g) return g;
   const size = NeuralNet.genomeSize(layers);
   if (g.length === size) return g;
-  const oldLayers = [OLD_INPUT_SIZE, ...layers.slice(1)];
-  if (g.length !== NeuralNet.genomeSize(oldLayers)) return g;
-  const out = new Float32Array(size), nIn = layers[0], extra = nIn - OLD_INPUT_SIZE;
+  const oldIn = OLD_INPUT_SIZES.find(n => g.length === NeuralNet.genomeSize([n, ...layers.slice(1)]));
+  if (!oldIn) return g;
+  const out = new Float32Array(size), nIn = layers[0];
   let o = 0, p = 0;
   for (let j = 0; j < layers[1]; j++) {
-    for (let i = 0; i < OLD_INPUT_SIZE; i++) out[p++] = g[o++];
-    p += extra;
+    for (let i = 0; i < BASE_INPUT_SIZE; i++) out[p++] = g[o++];  // driving inputs
+    o += oldIn - BASE_INPUT_SIZE;                                  // old police inputs: dropped
+    p += nIn - BASE_INPUT_SIZE;                                    // radar inputs: zero weight
     out[p++] = g[o++]; // bias
   }
   while (o < g.length) out[p++] = g[o++];
