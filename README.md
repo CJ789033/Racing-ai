@@ -27,7 +27,7 @@ When you edit the track and restart, the population starts from the best brain s
 learning), so it usually adapts quickly. Use **AI → Reset AI** to start from scratch.
 
 ### 🚓 Police (co-evolution)
-Turn on police in **AI** settings. Police cars wait along the lap and get their own neural nets (sensors + the direction, distance and closing speed of the nearest racer). Touching a racer busts it 🚨. Each generation only the best two police brains survive and every other police car is a mutant of them, so as racers learn to dodge (racers sense the nearest police car and their distance sensors see police cars), the police keep getting sharper – an arms race. Code: `src/sim/police.js`.
+Turn on police in **AI** settings. Police cars wait along the lap. They have a built-in road-following instinct, are 10 % faster than racers and bounce off the barriers instead of crashing out; their own neural nets (sensors + where the nearest racer is, its lane and closing speed) evolve the *tactics*: which part of the road to block or cut across, and when to wait or pounce. Police are scored on busts plus time spent actively chasing. Touching a racer busts it 🚨. Each generation only the best two police brains survive and every other police car is a mutant of them, so as racers learn to dodge (racers sense the nearest police car and their distance sensors see police cars), the police keep getting sharper – an arms race. Code: `src/sim/police.js`.
 
 ### Everything runs locally
 

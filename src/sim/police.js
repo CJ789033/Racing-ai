@@ -17,7 +17,7 @@ export const POLICE_RADIUS = 1.6;    // how big a police car looks to the racers
 const SEE_RACER = 120;               // how far police can "radio" the nearest racer
 const P_LOOK = [12, 35];
 // Inputs: rays + speed + lateral + road-ahead directions + nearest racer (angle, closeness, closing speed)
-export const POLICE_INPUTS = RAY_ANGLES.length + 2 + P_LOOK.length + 3;
+export const POLICE_INPUTS = RAY_ANGLES.length + 2 + P_LOOK.length + 5;
 const POLICE_LAYERS = [POLICE_INPUTS, 12, 8, 2];
 const KEEP_BEST = 2;                 // only the best of the best survive & breed
 
@@ -39,7 +39,12 @@ export class PoliceCar extends Car {
     this.heading = Math.atan2(tr.dz[s], tr.dx[s]);
     this.busts = 0;
     this.closest = Infinity;
+    this.pursuit = 0;     // time spent close to a racer (weighted by how close)
+    this.wallTime = 0;    // time spent scraping the barriers
   }
+
+  // pursuit-tuned engine: 10 % more power and top speed than the racers
+  get speedFactor() { return super.speedFactor * 1.1; }
 
   get racing() { return false; } // never counts towards "cars still racing"
 
@@ -70,15 +75,39 @@ export class PoliceCar extends Car {
       inp[k++] = angleDiff(Math.atan2(uz, ux), h) / Math.PI;
       inp[k++] = 1 - d / SEE_RACER;
       inp[k++] = Math.max(-1, Math.min(1, -((best.vx - this.vx) * ux + (best.vz - this.vz) * uz) / 40)); // + = getting closer
+      inp[k++] = Math.max(-1.5, Math.min(1.5, best.lateral / tr.halfWidth));                          // racer's lane
+      inp[k++] = Math.max(-1, Math.min(1, ((best.x - this.x) * tr.dx[this.seg] + (best.z - this.z) * tr.dz[this.seg]) / 60)); // + = ahead along the road
       if (d < this.closest) this.closest = d;
-    } else { inp[k++] = 0; inp[k++] = 0; inp[k++] = 0; }
+      // chasing = moving and closing in on a racer (parked cops don't earn this)
+      const closing = -((best.vx - this.vx) * ux + (best.vz - this.vz) * uz);
+      if (d < 40 && this.speed > 6 && closing > 0) this.pursuit += (1 - d / 40) * Math.min(1, closing / 15) * (this.dt || 1 / 60);
+    } else { inp[k++] = 0; inp[k++] = 0; inp[k++] = 0; inp[k++] = 0; inp[k++] = 0; }
     return inp;
+  }
+
+  /**
+   * Police have a built-in driving instinct (follow the road), so evolution can
+   * work on tactics: the brain picks where across the road to drive (block a
+   * lane, cut in on a racer) and how hard to accelerate or brake (wait, pounce).
+   */
+  think() {
+    const out = this.brain.forward(this.sense());
+    const tr = this.track;
+    const look = 10 + this.speed * 0.45;
+    let idx = this.seg, walked = 0;
+    while (walked < look) { const n = tr.next[idx]; if (n === idx) break; idx = n; walked += tr.step; }
+    const off = out[0] * (tr.halfWidth - 1.2);
+    const tx = tr.cx[idx] - tr.dz[idx] * off, tz = tr.cz[idx] + tr.dx[idx] * off;
+    const err = angleDiff(Math.atan2(tz - this.z, tx - this.x), this.heading);
+    this.steer = Math.max(-1, Math.min(1, err * 2.2));
+    this.throttle = out[1];
   }
 
   // police don't do laps – they just need to stay on the road
   updateTrackPosition() {
     const tr = this.track;
     const nr = tr.nearest(this.x, this.z, this.seg);
+    this._nr = nr;
     this.seg = nr.index; this.lateral = nr.lateral;
     this.roadH = tr.heightAt(nr.index, nr.t);
     this.inTunnel = tr.tunnel[nr.index] === 1;
@@ -86,10 +115,27 @@ export class PoliceCar extends Car {
   }
   checkEnd() { /* parking as a roadblock is allowed */ }
 
+  // police can't drive off the road: they bounce along the barrier instead (losing speed)
+  die(reason) {
+    if ((reason !== 'offroad' && reason !== 'landing') || !this._nr) { super.die(reason); return; }
+    const nr = this._nr, tr = this.track;
+    let ox = this.x - nr.px, oz = this.z - nr.pz; const L = Math.hypot(ox, oz) || 1; ox /= L; oz /= L;
+    const keep = tr.halfWidth - 0.3;
+    this.x = nr.px + ox * keep; this.z = nr.pz + oz * keep;
+    const vn = this.vx * ox + this.vz * oz;
+    if (vn > 0) { this.vx -= vn * ox; this.vz -= vn * oz; }
+    this.vx *= 0.85; this.vz *= 0.85;
+    const fx = Math.cos(this.heading), fz = Math.sin(this.heading);
+    this.speed = Math.max(0, this.vx * fx + this.vz * fz);
+    this.lateral = Math.sign(this.lateral) * keep;
+    this.wallTime += this.dt || 1 / 60;
+  }
+
   computeFitness() {
-    // busts count most; getting close is a small hint early on; crashing costs
+    // busts count most; staying close to racers (chasing them) guides learning
+    // until the busts come; scraping the barriers and crashing cost a little
     const near = Number.isFinite(this.closest) ? Math.max(0, 1 - this.closest / 40) : 0;
-    this.fitness = this.busts * 10 + near - (this.alive ? 0 : 0.5);
+    this.fitness = this.busts * 10 + this.pursuit * 2 + near - this.wallTime * 0.05 - (this.alive ? 0 : 3);
     return this.fitness;
   }
 }

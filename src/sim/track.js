@@ -349,7 +349,7 @@ export class Track {
     const D = this.D[best] + (this.D[j] - this.D[best]) * bt;
     // lateral offset relative to the driving direction (+ = driver's right)
     const lateral = (x - bpx) * -this.dz[best] + (z - bpz) * this.dx[best];
-    return { index: best, t: bt, dist: Math.sqrt(bd), lateral, D };
+    return { index: best, t: bt, dist: Math.sqrt(bd), lateral, D, px: bpx, pz: bpz };
   }
 
   /** Gradient of the road at sample i along its edge's point order (rise per metre). */

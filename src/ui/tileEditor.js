@@ -467,7 +467,10 @@ export class TileEditor {
    */
   modify(t, changes) {
     const old = { ...t };
-    const linked = pieceGeometry(t).ports.filter(p => this.portLinked(t, p));
+    const oldPorts = pieceGeometry(t).ports;
+    const linked = oldPorts.filter(p => this.portLinked(t, p));
+    // flipping a fork must keep its stem (port 0) where it was, or the traffic would run through it backwards
+    const stem = 'flip' in changes ? oldPorts[0] : null;
     Object.assign(t, changes);
     const g = pieceGeometry(t);
     const candidates = [];
@@ -476,7 +479,8 @@ export class TileEditor {
     const score = p => {
       const probe = { ...t, ...p };
       const ports = pieceGeometry(probe).ports;
-      const kept = linked.filter(l => ports.some(q => q.c === l.c && q.r === l.r && q.e === l.e)).length;
+      const kept = linked.filter(l => ports.some(q => q.c === l.c && q.r === l.r && q.e === l.e)).length
+        + (stem && ports[0].c === stem.c && ports[0].r === stem.r && ports[0].e === stem.e ? 10 : 0);
       const cover = footprint(probe).some(f => f.c === old.c && f.r === old.r);
       return -kept * 100 + (cover ? 0 : 50) + Math.abs(p.c - old.c) + Math.abs(p.r - old.r);
     };
