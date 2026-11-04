@@ -32,6 +32,9 @@ Turn on police in **AI** settings. Police never park (once moving they keep at l
 ### 🎓 Tutorial
 New players get a guided tour (`src/ui/tutorial.js`, steps in `src/main.js`): each step spot-lights one part of the screen – parts, grid, tools, presets, Start evolution, then the race stats, speed, brain, AI settings and the Track button – with Back / Next / Skip (keyboard: ← → Enter Esc). Phones get touch wording. Replay it from **⚙️ AI settings → 🎓 Replay tutorial**.
 
+### 🛠️ Developer menu
+Hidden: press **↑ ↑ ↓ ← →** (or swipe up, up, down, left, right on a touch screen). Shows the build (commit + build time, so you can tell whether the site has updated), device / GPU / FPS / simulation speed, editor and track diagnostics (roads with no way through or pointing both ways), the AI (generation, settings, why cars went out last generation), the leader's every brain input and output, each police car's state, local storage and captured script errors. **Copy debug report** copies it all as text to paste into a bug report. Code: `src/ui/devMenu.js`.
+
 ### 📝 What's new
 `src/changelog.js` lists every update in plain language. Returning players get a popup with everything added since their last visit (remembered per device); the 📝 buttons (editor and race toolbar) open it any time and show a dot when there's something unseen. **Add an entry with the next id whenever the game changes.**
 

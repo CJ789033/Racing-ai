@@ -129,6 +129,9 @@ export class Evolution {
       busted: sorted.filter(c => c.busted).length,
     };
     this.history.push(stats);
+    // why each car's run ended (for the developer menu)
+    stats.outcomes = {};
+    for (const c of this.cars) { const k = c.finished ? 'finished' : c.killedBy || 'time up'; stats.outcomes[k] = (stats.outcomes[k] || 0) + 1; }
     this.lastStats = stats;
 
     if (genBestLap && (!this.bestLap || genBestLap < this.bestLap)) this.bestLap = genBestLap;

@@ -171,3 +171,19 @@ input[type=range] { width: 130px; accent-color: #ff8a1f; }
 .tutButtons .tutSkip { background: none; border: none; color: #9aa4b1; padding: 8px 4px; font-size: 13px; }
 .tutButtons button:disabled { opacity: 0.4; }
 .tutGap { flex: 1; }
+/* developer menu */
+.devMenu { position: fixed; z-index: 40; top: calc(10px + env(safe-area-inset-top, 0px)); right: calc(10px + env(safe-area-inset-right, 0px));
+  width: min(440px, calc(100vw - 20px)); max-height: calc(100% - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; background: rgba(12, 14, 18, 0.96); border: 1px solid #3fa7ff; border-radius: 10px;
+  color: #dfe6ee; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+.devHead { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid #2a3140; font-family: system-ui, sans-serif; font-size: 14px; }
+.devHead button { flex-direction: row; font-size: 12px; padding: 5px 9px; }
+.devGap { flex: 1; }
+.devBody { overflow: auto; padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+.devSec { color: #3fa7ff; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; margin: 4px 0 2px; }
+.devBody dl { display: grid; grid-template-columns: max-content 1fr; gap: 1px 10px; margin: 0; }
+.devBody dt { color: #8d98a8; }
+.devBody dd { margin: 0; white-space: pre-wrap; word-break: break-word; min-width: 0; font-variant-numeric: tabular-nums; }
+.devBody pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.devFoot { padding: 6px 10px 8px; border-top: 1px solid #2a3140; font-family: system-ui, sans-serif; }
+.devText { width: 100%; min-height: 140px; font: 11px ui-monospace, monospace; background: #0b0d10; color: #dfe6ee; border: 1px solid #3a414c; }
