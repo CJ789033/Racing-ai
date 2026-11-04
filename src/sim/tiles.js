@@ -105,8 +105,10 @@ function baseShape(tile) {
   switch (tile.type) {
     case 'corner': {
       const n = paramValue(tile, 'size'), R = (n - 0.5) * C;
+      const under = !!paramValue(tile, 'tunnel'), cells = [];
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) cells.push({ x, y, layer: under ? -1 : 0 });
       return {
-        w: n, h: n, ports: [{ x: 0, y: n - 1, e: 3 }, { x: n - 1, y: 0, e: 0 }], nodes: 2,
+        w: n, h: n, ports: [{ x: 0, y: n - 1, e: 3 }, { x: n - 1, y: 0, e: 0 }], nodes: 2, cells,
         edges: [{ a: 0, b: 1, f: arc(0, 0, R, Math.PI / 2, 0), len: Math.PI / 2 * R, tunnel: !!paramValue(tile, 'tunnel') }],
       };
     }
@@ -210,10 +212,10 @@ function baseShape(tile) {
     default: { // start, straight, chicane
       const n = paramValue(tile, 'len'), L = n * C;
       const amp = tile.type === 'chicane' ? paramValue(tile, 'amp') : 0;
-      // a long straight tunnel is deep enough in its middle cells for roads to cross over it
-      const deep = tile.type === 'straight' && paramValue(tile, 'tunnel') && n >= 3;
+      // tunnels are underground: other roads may cross over any of their cells
+      const under = !!paramValue(tile, 'tunnel');
       const cells = [];
-      for (let i = 0; i < n; i++) cells.push({ x: i, y: 0, layer: deep && i > 0 && i < n - 1 ? -1 : 0 });
+      for (let i = 0; i < n; i++) cells.push({ x: i, y: 0, layer: under ? -1 : 0 });
       return {
         w: n, h: 1, ports: [{ x: 0, y: 0, e: 3 }, { x: n - 1, y: 0, e: 1 }], nodes: 2, cells,
         edges: [{
@@ -364,7 +366,17 @@ export function traceLayout(tiles) {
   const ids = new Map();
   const id = v => { if (!ids.has(v)) ids.set(v, ids.size); return ids.get(v); };
   for (const e of edges) { e.a = id(e.a); e.b = id(e.b); }
-  shapeTunnels(edges);
+  // where does a road cross over a tunnel? (a surface piece sharing a cell with a tunnel piece)
+  const crossings = [];
+  for (const t of order) for (const f of footprint(t)) {
+    if (f.layer !== -1) continue;
+    if (order.some(o => o !== t && footprint(o).some(g => g.c === f.c && g.r === f.r && g.layer >= 0))) {
+      const x0 = (f.c - COLS / 2) * CELL, z0 = (f.r - ROWS / 2) * CELL;
+      crossings.push({ x0: x0 - 3, x1: x0 + CELL + 3, z0: z0 - 3, z1: z0 + CELL + 3, c: f.c, r: f.r });
+    }
+  }
+  const tErr = shapeTunnels(edges, crossings);
+  if (tErr) return { ok: false, order, error: tErr };
 
   // Can we get from just past the start line back round to it?
   const adj = Array.from({ length: ids.size }, () => []);
@@ -398,7 +410,9 @@ const MIN_DEEP_TUNNEL = 89; // shorter tunnels stay at ground level under a hill
  * tunnel corner) can't dig down that fast, so it stays at ground level and is
  * built as a tunnel through a hill instead.
  */
-function shapeTunnels(edges) {
+function shapeTunnels(edges, crossings = []) {
+  let error = null;
+  const underRoad = p => crossings.find(q => p.x > q.x0 && p.x < q.x1 && p.z > q.z0 && p.z < q.z1);
   const byNode = new Map();
   edges.forEach((e, i) => { for (const n of [e.a, e.b]) { if (!byNode.has(n)) byNode.set(n, []); byNode.get(n).push(i); } });
   // two tunnel edges meeting at a plain join continue the same run
@@ -434,16 +448,27 @@ function shapeTunnels(edges) {
       total = d[d.length - 1];
       return rev ? d.reverse() : d;
     });
-    const hill = !closed && total < MIN_DEEP_TUNNEL;
-    const R = Math.min(CELL, total / 2);
-    const ease = x => (x >= R ? 1 : (1 - Math.cos(Math.PI * x / R)) / 2);
+    // stretches that have a road crossing over them must be fully deep
+    let first = Infinity, last = -Infinity, cross = null;
+    run.forEach(({ e }, k) => edges[e].points.forEach((p, j) => {
+      const q = underRoad(p);
+      if (q) { cross = cross || q; first = Math.min(first, along[k][j]); last = Math.max(last, along[k][j]); }
+    }));
+    const hill = !closed && !cross && total < MIN_DEEP_TUNNEL;
+    // ramp lengths at each end: normally up to a cell, shorter if a crossing comes sooner
+    const Ra = Math.min(CELL, cross ? first - 4 : total / 2), Rb = Math.min(CELL, cross ? total - last - 4 : total / 2);
+    if (cross && !closed && Math.min(Ra, Rb) < 9 && !error) {
+      error = { c: cross.c, r: cross.r, msg: 'A road crosses this tunnel too close to its entrance – the tunnel can\'t get deep enough. Make the tunnel longer.' };
+    }
+    const ease = (x, R) => (x >= R ? 1 : x <= 0 ? 0 : (1 - Math.cos(Math.PI * x / R)) / 2);
     run.forEach(({ e }, k) => {
       edges[e].hill = hill;
       edges[e].points = edges[e].points.map((p, j) => ({
-        ...p, h: hill ? 0 : closed ? -TUNNEL_DEPTH : -TUNNEL_DEPTH * Math.min(ease(along[k][j]), ease(total - along[k][j])),
+        ...p, h: hill ? 0 : closed ? -TUNNEL_DEPTH : -TUNNEL_DEPTH * Math.min(ease(along[k][j], Ra), ease(total - along[k][j], Rb)),
       }));
     });
   });
+  return error;
 }
 
 // ---------------------------------------------------------------------------
